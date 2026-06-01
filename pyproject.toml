@@ -1,0 +1,192 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "uplift-forecast"
+version = "0.1.0"
+description = "Uplift modelling library (neural and meta-learner models with a unified and simple API)"
+authors = [
+  { name = "Danil Ovsiannikov", email = "danil.ovsnnv@gmail.com" },
+]
+readme = "README.md"
+requires-python = "~=3.12"
+
+classifiers = [
+    "Programming Language :: Python :: 3",
+]
+
+dependencies = [
+  "torch>=2.1",
+  "pytorch-lightning>=2.0",
+  "numpy>=1.24",
+  "pandas>=2.0",
+  "scikit-learn>=1.3",
+]
+
+[project.optional-dependencies]
+catboost = [
+  "catboost>=1.2",
+]
+polars = [
+  "polars>=0.20",
+]
+auto = [
+  "optuna>=3.5",
+]
+dev = [
+  "ruff",
+  "mypy",
+  "pre-commit",
+  "pytest>=8.0",
+  "pytest-cov",
+  "pytest-sugar",
+]
+
+[tool.setuptools.packages.find]
+include = ["uplift_forecast*"]
+exclude = ["tests*", "examples*"]
+
+[tool.ruff]
+line-length = 120
+indent-width = 4
+target-version = "py312"
+src = ["uplift_forecast"]
+include = ["pyproject.toml", "uplift_forecast/**/*.py", "tests/**/*.py"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["uplift_forecast"]
+force-sort-within-sections = true
+
+[tool.ruff.lint]
+extend-select = ["I"]
+select = [
+    'F',     # Pyflakes
+    'E', 'W',# pycodestyle
+    'C90',   # mccabe
+    'I',     # isort
+    'N',     # pep8-naming
+    'UP',    # pyupgrade
+    'YTT',   # flake8-2020
+    'ANN',   # flake8-annotations
+    'ASYNC', # flake8-async
+    'S',     # flake8-bandit
+    'BLE',   # flake8-blind-except
+    'FBT',   # flake8-boolean-trap
+    'B',     # flake8-bugbear
+    'A',     # flake8-builtins
+    'COM',   # flake8-commas
+    'C4',    # flake8-comprehensions
+    'DTZ',   # flake8-datetimez
+    'T10',   # flake8-debugger
+    'EM',    # flake8-errmsg
+    'EXE',   # flake8-executable
+    'FA',    # flake8-future-annotations
+    'ISC',   # flake8-implicit-str-concat
+    'ICN',   # flake8-import-conventions
+    'G',     # flake8-logging-format
+    'INP',   # flake8-no-pep420
+    'PIE',   # flake8-pie
+    'T20',   # flake8-print
+    'PYI',   # flake8-pyi
+    'PT',    # flake8-pytest-style
+    'RSE',   # flake8-raise
+    'RET',   # flake8-return
+    'SLF',   # flake8-self
+    'SLOT',  # flake8-slots
+    'SIM',   # flake8-simplify
+    'TID',   # flake8-tidy-imports
+    'TCH',   # flake8-type-checking
+    'INT',   # flake8-gettext
+    'ARG',   # flake8-unused-arguments
+    'PTH',   # flake8-use-pathlib
+    'ERA',   # eradicate
+    'PD',    # pandas-vet
+    'PGH',   # pygrep-hooks
+    'PL',    # Pylint
+    'TRY',   # tryceratops
+    'FLY',   # flynt
+    'NPY',   # NumPy-specific rules
+    'PERF',  # Perflint
+    'RUF',   # Ruff-specific rules
+]
+
+ignore = [
+    'ANN002', # Missing type annotation for `*args`
+    'ANN003', # Missing type annotation for `**kwargs`
+    'ANN204', # Missing return type annotation for special method `__init__`
+    'ANN401', # Dynamically typed expressions (typing.Any) are disallowed in `**kwargs`
+    'ARG001', # Unused function argument (often used in callbacks)
+    'C901',   # Too complex
+    'COM812', # Trailing comma missing
+    'COM819', # Trailing comma prohibited
+    'D100',   # Missing docstring in public module
+    'D104',   # Missing docstring in public package
+    'DTZ001', # `datetime.datetime()` called without a `tzinfo` argument
+    'DTZ005', # `datetime.datetime.now()` called without a `tz` argument
+    'E402',   # Module level import not at top of file
+    'EM101',  # Exception must not use a string literal
+    'EM102',  # Exception must not use an f-string literal
+    'ERA001', # Found commented-out code
+    'FA100',  # Missing `from __future__ import annotations`
+    'G004',   # Logging statement uses f-string
+    'I001',   # Import block is un-sorted or un-formatted
+    'N812',   # Lowercase `functions` imported as non-lowercase `F`
+    'N817',   # CamelCase imported as acronym
+    'NPY002', # Replace legacy `np.random.seed`
+    'PD002',  # `inplace=True` should be avoided
+    'PD011',  # Use `.to_numpy()` instead of `.values`
+    'PD901',  # Avoid using the generic variable name `df`
+    'PLR0913',# Too many arguments
+    'PLR2004',# Magic value used in comparison
+    'RET504', # Unnecessary assignment to `...` before `return`
+    'RUF001', # String contains ambiguous Cyrillic
+    'RUF002', # Docstring contains ambiguous Cyrillic
+    'RUF003', # Comment contains ambiguous Cyrillic
+    'RUF012', # Mutable class attributes should be annotated with `typing.ClassVar`
+    'S301',   # `pickle` may be unsafe
+    'SLF001', # Private member accessed
+    'T201',   # `print` found
+    'TC002',  # Move third-party import into a type-checking block
+    'TC003',  # Move standard library import into a type-checking block
+    'TRY003', # Avoid specifying long messages outside the exception class
+    'TRY300', # Consider moving statement to else block
+    'UP006',  # Use `list` instead of `List`
+    'UP035',  # `typing.List` is deprecated
+    'W291',   # Trailing whitespace
+    'W293',   # Blank line contains whitespace
+]
+
+exclude = [
+    '.git',
+    '.ruff_cache',
+    '.venv',
+    'build',
+    'dist',
+    'venv',
+]
+
+[tool.ruff.lint.per-file-ignores]
+'tests/**' = [
+    'ANN001',
+    'ANN201',
+    'PT006',
+    'S101',
+]
+
+[tool.ruff.format]
+indent-style = 'space'
+skip-magic-trailing-comma = false
+quote-style = 'single'
+
+[tool.ruff.lint.flake8-quotes]
+docstring-quotes = 'double'
+inline-quotes = 'single'
+multiline-quotes = 'single'
+
+[tool.ruff.lint.pydocstyle]
+convention = 'google'
+
+[tool.pytest.ini_options]
+testpaths = ['tests']
+addopts = '--strict-markers'
