@@ -52,15 +52,34 @@ import numpy as np
 from sklearn.ensemble import GradientBoostingRegressor
 
 from uplift_forecast import UpliftForecast
-from uplift_forecast.models import TLearner, SLearner
+from uplift_forecast.models import TLearner, RLearner
 from uplift_forecast.metrics import auuc_score, qini_score
 
+rng = np.random.default_rng(0)
+n = 2000
+X = rng.standard_normal((n, 10))
+treatment = rng.integers(0, 2, size=n)
+y = 2.0 * treatment * (X[:, 0] > 0) + rng.standard_normal(n) * 0.5
+
+X_tr, X_te = X[:1600], X[1600:]
+t_tr, t_te = treatment[:1600], treatment[1600:]
+y_tr, y_te = y[:1600], y[1600:]
+
 uf = UpliftForecast(models=[
-    SLearner(GradientBoostingRegressor(random_state=0), alias='slearner'),
-    TLearner(GradientBoostingRegressor(random_state=0), alias='tlearner'),
+    TLearner(model=GradientBoostingRegressor(n_estimators=100)),
+    RLearner(
+        outcome_model=GradientBoostingRegressor(),
+        effect_model=GradientBoostingRegressor(),
+    ),
 ])
-uf.fit(X_train, treatment_train, y_train)
-preds = uf.predict(X_test)            # one 'uplift_<model>' column per model
+uf.fit(X_tr, t_tr, y_tr)
+
+preds = uf.predict(X_te)
+# DataFrame with columns: 'uplift_TLearner', 'uplift_RLearner'
+
+for col in preds.columns:
+    name = col.replace('uplift_', '')
+    print(f"{name}  AUUC={auuc_score(y_te, preds[col].values, t_te):.4f}")
 ```
 
 ## Next steps

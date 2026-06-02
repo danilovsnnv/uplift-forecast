@@ -10,7 +10,7 @@ authors = [
   { name = "Danil Ovsiannikov", email = "danil.ovsnnv@gmail.com" },
 ]
 readme = "README.md"
-license = { text = "MIT" }
+license = { file = "LICENSE" }
 requires-python = ">=3.10"
 
 keywords = [
@@ -81,7 +81,7 @@ exclude = ["tests*", "examples*"]
 [tool.ruff]
 line-length = 120
 indent-width = 4
-target-version = "py312"
+target-version = "py310"
 src = ["uplift_forecast"]
 include = ["pyproject.toml", "uplift_forecast/**/*.py", "tests/**/*.py"]
 
