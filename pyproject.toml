@@ -5,15 +5,37 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "uplift-forecast"
 version = "0.1.0"
-description = "Uplift modelling library (neural and meta-learner models with a unified and simple API)"
+description = "Uplift modelling library: neural, meta-learner, and matching models for causal treatment-effect estimation under one unified API"
 authors = [
   { name = "Danil Ovsiannikov", email = "danil.ovsnnv@gmail.com" },
 ]
 readme = "README.md"
-requires-python = "~=3.12"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+
+keywords = [
+    "uplift-modeling",
+    "causal-inference",
+    "treatment-effect",
+    "cate",
+    "meta-learners",
+    "propensity-matching",
+    "policy-learning",
+    "machine-learning",
+]
 
 classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 
 dependencies = [
@@ -23,6 +45,11 @@ dependencies = [
   "pandas>=2.0",
   "scikit-learn>=1.3",
 ]
+
+[project.urls]
+Homepage = "https://github.com/danilovsnnv/uplift-forecast"
+Repository = "https://github.com/danilovsnnv/uplift-forecast"
+"Bug Tracker" = "https://github.com/danilovsnnv/uplift-forecast/issues"
 
 [project.optional-dependencies]
 catboost = [
@@ -41,6 +68,10 @@ dev = [
   "pytest>=8.0",
   "pytest-cov",
   "pytest-sugar",
+]
+docs = [
+  "mkdocs-material>=9.5",
+  "mkdocstrings[python]>=0.24",
 ]
 
 [tool.setuptools.packages.find]

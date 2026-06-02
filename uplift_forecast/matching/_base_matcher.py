@@ -113,9 +113,19 @@ class BaseMatcher:
         weight = np.concatenate([np.ones(len(treated_keep)), control_weight])
         return self._build_frame(X, treatment, y, rows, weight)
 
+    def _require_enough_controls(self, n_control: int) -> None:
+        # k-NN matching cannot draw n_neighbors distinct controls when fewer exist;
+        # surface that as a clear error instead of silently matching fewer than asked.
+        if self.n_neighbors > n_control:
+            raise ValueError(
+                f'n_neighbors={self.n_neighbors} exceeds the {n_control} available control '
+                'unit(s); reduce n_neighbors or supply more control units.'
+            )
+
     def _nearest_neighbors(self, treated_emb: np.ndarray, control_emb: np.ndarray) -> list[np.ndarray]:
         """Return, per treated unit, the positions of its matched controls (within the caliper)."""
         n_control = control_emb.shape[0]
+        self._require_enough_controls(n_control)
         if self.replace:
             k = min(self.n_neighbors, n_control)
             dist, nbr = NearestNeighbors(n_neighbors=k).fit(control_emb).kneighbors(treated_emb)

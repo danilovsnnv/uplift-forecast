@@ -105,6 +105,7 @@ class MahalanobisPSCaliperMatcher(BaseMatcher):
         control_idx = np.flatnonzero(treatment_arr == 0)
         if treated_idx.size == 0 or control_idx.size == 0:
             raise ValueError('Matching needs both treated and control units in the data.')
+        self._require_enough_controls(control_idx.size)
 
         p_control = propensity[control_idx]
         z_control = z[control_idx]

@@ -49,7 +49,7 @@ pip install -e ".[catboost,polars,auto,dev]"  # everything, including dev toolin
 ```
 
 Runtime dependencies: `torch`, `pytorch-lightning`, `numpy`, `pandas`, `scikit-learn`.
-Python 3.12 or later is required.
+Python 3.10 or later is required.
 
 ---
 

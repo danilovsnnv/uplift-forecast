@@ -78,7 +78,8 @@ class KernelMatcher(BaseMatcher):
             full = np.arange(n_control)
             return [(full, dists[i]) for i in range(treated_emb.shape[0])]
         if self.candidate_mode == 'knn':
-            nn = NearestNeighbors(n_neighbors=min(self.n_neighbors, n_control), metric=self.metric).fit(control_emb)
+            self._require_enough_controls(n_control)
+            nn = NearestNeighbors(n_neighbors=self.n_neighbors, metric=self.metric).fit(control_emb)
             dist, nbr = nn.kneighbors(treated_emb)
             return [(nbr[i], dist[i]) for i in range(treated_emb.shape[0])]
         nn = NearestNeighbors(metric=self.metric).fit(control_emb)

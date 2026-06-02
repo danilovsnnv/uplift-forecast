@@ -84,6 +84,7 @@ class NearestNeighborMatcher(BaseMatcher):
     def _nearest_neighbors(self, treated_emb: np.ndarray, control_emb: np.ndarray) -> list[np.ndarray]:
         backend = self._resolve_backend().fit(control_emb)
         n_control = control_emb.shape[0]
+        self._require_enough_controls(n_control)
         if self.replace:
             dist, nbr = backend.kneighbors(treated_emb, self.n_neighbors)
             if self.caliper is None:
