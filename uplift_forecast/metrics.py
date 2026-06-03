@@ -20,6 +20,10 @@ import pandas as pd
 from numpy.typing import ArrayLike
 from sklearn.metrics import auc, mean_absolute_error, mean_absolute_percentage_error, mean_squared_error
 
+# numpy renamed `trapz` to `trapezoid` in 2.0 and removed the old name; resolve
+# whichever exists so we support numpy 1.24+ and 2.x alike.
+_trapezoid = getattr(np, 'trapezoid', None) or np.trapz  # noqa: NPY201
+
 __all__ = [
     'auuc_score',
     'best_dose',
@@ -331,9 +335,7 @@ def dose_response_mise(true_curves: ArrayLike, pred_curves: ArrayLike, t_grid: A
         raise ValueError(f'true_curves {true.shape} and pred_curves {pred.shape} must match.')
     if true.shape[1] != len(grid):
         raise ValueError(f'curves have {true.shape[1]} doses but t_grid has {len(grid)}.')
-    # np.trapz (not np.trapezoid) keeps compatibility with numpy < 2.0, which the
-    # package still supports (numpy>=1.24); trapezoid only exists on numpy >= 2.0.
-    integrated = np.trapz((pred - true) ** 2, grid, axis=1)  # noqa: NPY201
+    integrated = _trapezoid((pred - true) ** 2, grid, axis=1)
     return float(np.mean(integrated))
 
 
