@@ -104,7 +104,7 @@ class CausalForest(BaseMetaUpliftModel):
         x = np.asarray(_to_array(X), dtype=np.float64)
         t = treatment.astype(int)
         y = y.astype(np.float64)
-        n, p = x.shape
+        _, p = x.shape
         if not (t == 0).any() or not (t == 1).any():
             raise ValueError('CausalForest requires both treated and control samples in the data.')
 
