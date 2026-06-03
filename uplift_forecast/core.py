@@ -4,6 +4,7 @@ __all__ = ['UpliftForecast']
 import pickle
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 from numpy.typing import ArrayLike
 
@@ -67,18 +68,38 @@ class UpliftForecast:
         Returns:
             DataFrame with one ``uplift_<model>`` column per model, plus
             ``<model>_y0_pred`` / ``<model>_y1_pred`` when return_components=True.
+            Multi-arm models (predicting ``[n, K-1]`` uplift) emit one
+            ``uplift_<model>_arm{k}`` column per treated arm instead.
         """
         result = {}
         for model in self.models:
             name = model.display_name
             if return_components:
                 uplift, y0, y1 = model.predict(X, return_components=True)
-                result[f'uplift_{name}'] = uplift
+                self._add_uplift_columns(result, name, uplift)
                 result[f'{name}_y0_pred'] = y0
-                result[f'{name}_y1_pred'] = y1
+                self._add_component_columns(result, name, y1)
             else:
-                result[f'uplift_{name}'] = model.predict(X)
+                self._add_uplift_columns(result, name, model.predict(X))
         return pd.DataFrame(result)
+
+    @staticmethod
+    def _add_uplift_columns(result: dict, name: str, uplift) -> None:
+        uplift = np.asarray(uplift)
+        if uplift.ndim == 1:
+            result[f'uplift_{name}'] = uplift
+            return
+        for col in range(uplift.shape[1]):
+            result[f'uplift_{name}_arm{col + 1}'] = uplift[:, col]
+
+    @staticmethod
+    def _add_component_columns(result: dict, name: str, y1) -> None:
+        y1 = np.asarray(y1)
+        if y1.ndim == 1:
+            result[f'{name}_y1_pred'] = y1
+            return
+        for col in range(y1.shape[1]):
+            result[f'{name}_arm{col + 1}_y1_pred'] = y1[:, col]
 
     def save(self, path: str | Path) -> None:
         """Pickle the model list to a single file at path."""

@@ -20,7 +20,13 @@ from sklearn.metrics import auc, mean_absolute_error, mean_absolute_percentage_e
 
 __all__ = [
     'auuc_score',
+    'best_dose',
+    'cost_based_targeting_curve',
     'cumulative_gain_curve',
+    'dose_response_mise',
+    'multi_arm_auuc_scores',
+    'multi_arm_qini_scores',
+    'optimal_treatment_assignment',
     'qini_curve',
     'qini_score',
     'uplift_component_mae',
@@ -30,10 +36,10 @@ __all__ = [
 
 
 def _to_1d_array(arr: ArrayLike, name: str) -> np.ndarray:
-    out = np.asarray(arr).reshape(-1)
-    if out.ndim != 1:
-        raise ValueError(f'{name} must be 1-D, got shape={out.shape}.')
-    return out
+    out = np.asarray(arr)
+    if out.ndim > 1:
+        raise ValueError(f'{name} must be 1-D; got shape {out.shape}.')
+    return out.reshape(-1)
 
 
 def _validate_inputs(y_true: ArrayLike, uplift: ArrayLike, treatment: ArrayLike) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -175,6 +181,158 @@ def qini_score(
     """Qini coefficient: area under the Qini curve (normalised by default)."""
     y, u, t = _validate_inputs(y_true, uplift, treatment)
     return _normalised_auc(qini_curve, y, u, t, normalize=normalize)
+
+
+# ---------------------------------------------------------------------------
+# Multi-treatment (K-arm) metrics
+# ---------------------------------------------------------------------------
+
+
+def _multi_arm_uplift(uplift: ArrayLike, treatment: ArrayLike) -> tuple[np.ndarray, np.ndarray, list[int]]:
+    """Normalise multi-arm inputs to (uplift_2d, treatment_int, treated_arms)."""
+    t = _to_1d_array(treatment, 'treatment').astype(int)
+    u = np.asarray(uplift, dtype=float)
+    if u.ndim == 1:
+        u = u[:, None]
+    arms = sorted(set(t.tolist()))
+    if arms[0] != 0:
+        raise ValueError(f'treatment must include a control arm coded 0; got arms {arms}.')
+    treated = arms[1:]
+    if u.shape[1] != len(treated):
+        raise ValueError(
+            f'uplift has {u.shape[1]} column(s) but there are {len(treated)} treated arm(s) {treated}.',
+        )
+    return u, t, treated
+
+
+def _multi_arm_scores(y_true, uplift, treatment, score_fn, *, normalize: bool) -> dict[int, float]:
+    y = _to_1d_array(y_true, 'y_true').astype(float)
+    u, t, treated = _multi_arm_uplift(uplift, treatment)
+    scores = {}
+    for col, arm in enumerate(treated):
+        mask = (t == 0) | (t == arm)
+        sub_t = (t[mask] == arm).astype(int)
+        scores[arm] = score_fn(y[mask], u[mask, col], sub_t, normalize=normalize)
+    return scores
+
+
+def multi_arm_auuc_scores(
+    y_true: ArrayLike,
+    uplift: ArrayLike,
+    treatment: ArrayLike,
+    *,
+    normalize: bool = True,
+) -> dict[int, float]:
+    """Per-arm AUUC for a multi-treatment model (one score per treated arm vs control).
+
+    Each treated arm ``k`` is scored on the control-plus-arm-``k`` subset against
+    its own uplift column. Returns a dict ``{arm: auuc}``.
+    """
+    return _multi_arm_scores(y_true, uplift, treatment, auuc_score, normalize=normalize)
+
+
+def multi_arm_qini_scores(
+    y_true: ArrayLike,
+    uplift: ArrayLike,
+    treatment: ArrayLike,
+    *,
+    normalize: bool = True,
+) -> dict[int, float]:
+    """Per-arm Qini coefficient for a multi-treatment model (dict ``{arm: qini}``)."""
+    return _multi_arm_scores(y_true, uplift, treatment, qini_score, normalize=normalize)
+
+
+def optimal_treatment_assignment(uplift: ArrayLike, costs: ArrayLike | None = None) -> np.ndarray:
+    """Cost-aware best arm per unit (Zhao & Harinen, arXiv:1908.05372).
+
+    Assigns each unit the arm maximising ``uplift_k - cost_k``; if no arm has a
+    positive net effect the unit is left in control (arm 0).
+
+    Args:
+        uplift: Predicted uplift, ``[n]`` or ``[n, K-1]`` (one column per treated arm).
+        costs: Optional per-arm cost, scalar or ``[K-1]`` (defaults to 0).
+
+    Returns:
+        Integer arm per unit (``0`` = control, ``k`` = treated arm ``k``).
+    """
+    u = np.asarray(uplift, dtype=float)
+    if u.ndim == 1:
+        u = u[:, None]
+    cost = 0.0 if costs is None else np.asarray(costs, dtype=float).reshape(1, -1)
+    net = u - cost
+    best_col = net.argmax(axis=1)
+    best_val = net[np.arange(len(net)), best_col]
+    return np.where(best_val > 0, best_col + 1, 0).astype(int)
+
+
+def cost_based_targeting_curve(
+    uplift: ArrayLike,
+    costs: ArrayLike | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Model-expected net-uplift targeting curve for cost-aware multi-arm targeting.
+
+    Units are ordered by their best cost-adjusted net uplift; the curve is the
+    cumulative expected net uplift as more of the population is targeted with its
+    best arm. This is a model-based planning curve (how many to target), not a
+    realised-value estimate — for that, score the induced policy with
+    ``uplift_forecast.ope``.
+
+    Args:
+        uplift: Predicted uplift, ``[n]`` or ``[n, K-1]``.
+        costs: Optional per-arm cost, scalar or ``[K-1]``.
+
+    Returns:
+        ``(x, value)`` arrays of length ``n + 1`` with ``x[i] = i`` (units targeted)
+        and ``value`` the cumulative expected net uplift.
+    """
+    u = np.asarray(uplift, dtype=float)
+    if u.ndim == 1:
+        u = u[:, None]
+    cost = 0.0 if costs is None else np.asarray(costs, dtype=float).reshape(1, -1)
+    best_val = (u - cost).max(axis=1)
+    order = np.argsort(-best_val, kind='stable')
+    cum = np.concatenate([[0.0], np.cumsum(best_val[order])])
+    x = np.arange(len(u) + 1, dtype=float)
+    return x, cum
+
+
+# ---------------------------------------------------------------------------
+# Continuous-treatment (dose-response) metrics
+# ---------------------------------------------------------------------------
+
+
+def dose_response_mise(true_curves: ArrayLike, pred_curves: ArrayLike, t_grid: ArrayLike) -> float:
+    """Mean Integrated Squared Error between true and predicted dose-response curves.
+
+    ``MISE = mean_x integral_t (mu_hat(x, t) - mu(x, t))^2 dt`` (trapezoidal over the
+    dose grid). Requires the ground-truth ADRF, so it is a synthetic-data metric.
+
+    Args:
+        true_curves: True dose-response ``[n, len(t_grid)]``.
+        pred_curves: Predicted dose-response ``[n, len(t_grid)]``.
+        t_grid: Dose values the columns correspond to.
+
+    Returns:
+        The MISE (lower is better).
+    """
+    true = np.asarray(true_curves, dtype=float)
+    pred = np.asarray(pred_curves, dtype=float)
+    grid = np.asarray(t_grid, dtype=float).reshape(-1)
+    if true.shape != pred.shape:
+        raise ValueError(f'true_curves {true.shape} and pred_curves {pred.shape} must match.')
+    if true.shape[1] != len(grid):
+        raise ValueError(f'curves have {true.shape[1]} doses but t_grid has {len(grid)}.')
+    integrated = np.trapz((pred - true) ** 2, grid, axis=1)
+    return float(np.mean(integrated))
+
+
+def best_dose(pred_curves: ArrayLike, t_grid: ArrayLike) -> np.ndarray:
+    """Per-unit dose maximising the predicted response over the grid; shape ``[n]``."""
+    pred = np.asarray(pred_curves, dtype=float)
+    grid = np.asarray(t_grid, dtype=float).reshape(-1)
+    if pred.shape[1] != len(grid):
+        raise ValueError(f'pred_curves have {pred.shape[1]} doses but t_grid has {len(grid)}.')
+    return grid[pred.argmax(axis=1)]
 
 
 # ---------------------------------------------------------------------------

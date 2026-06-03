@@ -5,6 +5,7 @@ __all__ = [
     'DragonNetLoss',
     'RERUMLoss',
     'CFRLoss',
+    'TwoStageLoss',
     'zero_inflated_lognormal_pred',
     'zero_inflated_lognormal_loss',
     'compute_imbalance',
@@ -141,6 +142,58 @@ class PseudoPEHE(_PointDecodeMixin, nn.Module):
         elif self.reduction == 'mean':
             pehe = pehe.mean()
         return {'loss': pehe}
+
+
+class TwoStageLoss(nn.Module):
+    """Two-stage conversion-gate x value objective for revenue/LTV uplift.
+
+    Each arm's outcome head emits two logits per unit: a conversion logit and a
+    value. The predicted outcome is the gated value ``P(convert) * value``
+    (``decode``). Training combines a conversion BCE over all units with a value
+    regression restricted to converters (``y > 0``), so the value head is not
+    pulled toward 0 by the non-converting mass. This is the common e-commerce
+    decomposition ``P(convert) x E[value | convert]``; for a single-head ZILN
+    alternative see ``DragonNetLoss`` / ``RERUMLoss``.
+
+    Args:
+        value_weight: Weight on the converter value-regression term.
+        reduction: ``'mean'``, ``'sum'``, or ``'none'`` — passed to the BCE term.
+    """
+
+    outputsize = 2
+
+    def __init__(self, value_weight: float = 1.0, reduction: str = 'mean'):
+        super().__init__()
+        self.value_weight = value_weight
+        self.reduction = reduction
+
+    @staticmethod
+    def decode(logits: torch.Tensor) -> torch.Tensor:
+        """Map `[batch, 2]` (conversion_logit, value) to `P(convert) * value`."""
+        return torch.sigmoid(logits[:, [0]]) * logits[:, [1]]
+
+    def forward(
+        self,
+        y_true: torch.Tensor,
+        t_true: torch.Tensor,
+        y0_pred: torch.Tensor,
+        y1_pred: torch.Tensor,
+        **kwargs,
+    ) -> dict:
+        del kwargs
+        factual = t_true * y1_pred + (1 - t_true) * y0_pred
+        conv_logit = factual[:, [0]]
+        value = factual[:, [1]]
+        is_positive = (y_true > 0).float()
+
+        loss_conv = F.binary_cross_entropy_with_logits(conv_logit, is_positive, reduction=self.reduction)
+        mask = is_positive.bool().squeeze(-1)
+        if mask.any():
+            loss_value = F.mse_loss(value[mask], y_true[mask], reduction=self.reduction)
+        else:
+            loss_value = value.new_zeros(())
+        loss = loss_conv + self.value_weight * loss_value
+        return {'loss': loss, 'loss_conversion': loss_conv, 'loss_value': self.value_weight * loss_value}
 
 
 # ---------------------------------------------------------------------------

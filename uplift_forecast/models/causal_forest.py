@@ -169,6 +169,35 @@ class CausalForest(BaseMetaUpliftModel):
             raise RuntimeError('CausalForest has not been fitted yet. Call .fit() first.')
         return self._tree_predictions(X).var(axis=0)
 
+    def predict_interval(
+        self,
+        X: np.ndarray | pd.DataFrame,
+        alpha: float = 0.05,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Approximate ``(1 - alpha)`` confidence interval for the CATE.
+
+        Builds a normal interval ``tau(x) +/- z * sd(x)`` from the across-tree
+        standard deviation of the (honest) per-tree estimates. This is an
+        approximate interval from the ensemble spread, not the exact
+        infinitesimal-jackknife interval of GRF.
+
+        Args:
+            X: Features to score.
+            alpha: Significance level (``0.05`` -> 95% interval).
+
+        Returns:
+            ``(lower, upper)`` arrays of CATE bounds.
+        """
+        if not (0.0 < alpha < 1.0):
+            raise ValueError(f'alpha must be in (0, 1); got {alpha}.')
+        from statistics import NormalDist
+
+        preds = self._tree_predictions(X)
+        tau = preds.mean(axis=0)
+        sd = preds.std(axis=0)
+        z = NormalDist().inv_cdf(1.0 - alpha / 2.0)
+        return tau - z * sd, tau + z * sd
+
     def _tree_predictions(self, X: np.ndarray | pd.DataFrame) -> np.ndarray:
         x = np.asarray(_to_array(X), dtype=np.float64)
         preds = np.empty((len(self.causal_trees), len(x)), dtype=np.float64)

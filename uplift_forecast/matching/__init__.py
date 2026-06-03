@@ -8,11 +8,21 @@ __all__ = [
     'PropensityScoreMatcher',
     'covariate_balance',
     'match_rate',
+    'overlap_report',
+    'positivity_check',
     'standardized_mean_difference',
+    'variance_ratio',
 ]
 
 
-from ._diagnostics import covariate_balance, match_rate, standardized_mean_difference
+from ._diagnostics import (
+    covariate_balance,
+    match_rate,
+    overlap_report,
+    positivity_check,
+    standardized_mean_difference,
+    variance_ratio,
+)
 from .cem import CoarsenedExactMatcher
 from .embedding import EmbeddingMatcher
 from .general_nn import NearestNeighborMatcher
