@@ -147,7 +147,7 @@ class VCNet(BaseNeuralUpliftModel):
     def forward(self, features: torch.Tensor, dose: torch.Tensor) -> torch.Tensor:
         return self.head(self.representation(features), dose.reshape(-1).clamp(0.0, 1.0))
 
-    def _step(self, batch, loss_fn: nn.Module) -> dict:
+    def _step(self, batch: Any, loss_fn: nn.Module) -> dict:
         del loss_fn
         x, dose, y_true = batch
         x, dose, y_true = self._normalization(x, dose, y_true)
@@ -158,7 +158,7 @@ class VCNet(BaseNeuralUpliftModel):
         t = torch.full((x.shape[0],), float(dose), device=x.device)
         return self._inv_normalization(self._decode_outcome(self(x, t)))
 
-    def predict_step(self, batch, batch_idx: int):
+    def predict_step(self, batch: Any, batch_idx: int) -> tuple:
         del batch_idx
         with torch.no_grad():
             x = self._normalization(batch)

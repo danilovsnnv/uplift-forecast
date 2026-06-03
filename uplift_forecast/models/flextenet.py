@@ -136,7 +136,7 @@ class FlexTENet(BaseNeuralUpliftModel):
             penalty = penalty + cross.pow(2).sum()
         return penalty
 
-    def _step(self, batch, loss_fn: nn.Module) -> dict:
+    def _step(self, batch: Any, loss_fn: nn.Module) -> dict:
         x, treatment_true, y_true = batch
         x, treatment_true, y_true = self._normalization(x, treatment_true, y_true)
         y0_pred, y1_pred = self(x)
@@ -146,7 +146,7 @@ class FlexTENet(BaseNeuralUpliftModel):
         out['loss_ortho'] = ortho
         return out
 
-    def predict_step(self, batch, batch_idx: int):
+    def predict_step(self, batch: Any, batch_idx: int) -> tuple:
         del batch_idx
         with torch.no_grad():
             x = self._normalization(batch)

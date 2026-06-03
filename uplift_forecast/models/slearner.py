@@ -32,7 +32,7 @@ class SLearner(BaseMetaUpliftModel):
     """
 
     def __init__(self, model: Any, alias: str | None = None):
-        super(SLearner, self).__init__(alias=alias)
+        super().__init__(alias=alias)
         self.model = model
         self._fitted_model = None
 

@@ -56,7 +56,7 @@ class DRLearner(BaseMetaUpliftModel):
         random_state: int = 0,
         alias: str | None = None,
     ):
-        super(DRLearner, self).__init__(alias=alias)
+        super().__init__(alias=alias)
         if not 0.0 < propensity_clip < 0.5:
             raise ValueError(
                 f'propensity_clip must be in (0, 0.5); got {propensity_clip}.'

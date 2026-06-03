@@ -29,7 +29,7 @@ def _divergence(p_t: float, p_c: float, criterion: str) -> float:
 
 
 class _Node:
-    __slots__ = ('feature', 'threshold', 'left', 'right', 'p_t', 'p_c')
+    __slots__ = ('feature', 'left', 'p_c', 'p_t', 'right', 'threshold')
 
     def __init__(self, p_t: float, p_c: float):
         self.feature: int | None = None
@@ -119,7 +119,7 @@ class UpliftTree(BaseMetaUpliftModel):
         node.right = self._build(x[~left_mask], t[~left_mask], y[~left_mask], depth + 1)
         return node
 
-    def _best_split(self, x: np.ndarray, t: np.ndarray, y: np.ndarray, parent_div: float):
+    def _best_split(self, x: np.ndarray, t: np.ndarray, y: np.ndarray, parent_div: float) -> tuple | None:
         n = len(y)
         best_gain = self.min_gain
         best = None
@@ -141,7 +141,14 @@ class UpliftTree(BaseMetaUpliftModel):
                     best = (feature, float(threshold), left)
         return best
 
-    def _split_gain(self, t, y, left, n, parent_div) -> float | None:
+    def _split_gain(
+        self,
+        t: np.ndarray,
+        y: np.ndarray,
+        left: np.ndarray,
+        n: int,
+        parent_div: float,
+    ) -> float | None:
         right = ~left
         if left.sum() < self.min_samples_leaf or right.sum() < self.min_samples_leaf:
             return None

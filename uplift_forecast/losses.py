@@ -1,19 +1,19 @@
 __all__ = [
+    'CFRLoss',
+    'DragonNetLoss',
     'MAELoss',
     'MSELoss',
     'PseudoPEHE',
-    'DragonNetLoss',
     'RERUMLoss',
-    'CFRLoss',
     'TwoStageLoss',
-    'zero_inflated_lognormal_pred',
-    'zero_inflated_lognormal_loss',
     'compute_imbalance',
-    'safe_sqrt',
-    'mmd2_rbf',
-    'mmd2_lin',
     'lindisc',
+    'mmd2_lin',
+    'mmd2_rbf',
+    'safe_sqrt',
     'wasserstein',
+    'zero_inflated_lognormal_loss',
+    'zero_inflated_lognormal_pred',
 ]
 
 

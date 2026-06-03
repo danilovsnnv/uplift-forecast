@@ -48,7 +48,7 @@ class PolicyLearner(BaseMetaUpliftModel):
         random_state: int = 0,
         alias: str | None = None,
     ):
-        super(PolicyLearner, self).__init__(alias=alias)
+        super().__init__(alias=alias)
         self.cate_estimator = cate_estimator
         self.policy_model = policy_model
         self.threshold = threshold
@@ -112,7 +112,7 @@ class PolicyLearner(BaseMetaUpliftModel):
         if budget is not None:
             if not 0.0 < budget <= 1.0:
                 raise ValueError(f'budget must be in (0, 1]; got {budget}.')
-            return _top_k_mask(scores, int(round(budget * n)))
+            return _top_k_mask(scores, round(budget * n))
         if top_k is not None:
             if not 0 <= top_k <= n:
                 raise ValueError(f'top_k must be in [0, {n}]; got {top_k}.')

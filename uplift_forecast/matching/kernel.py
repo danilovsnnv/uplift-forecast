@@ -47,14 +47,14 @@ class KernelMatcher(BaseMatcher):
         return_weight_matrix: bool = False,
         alias: str | None = None,
     ):
-        super(KernelMatcher, self).__init__(n_neighbors=n_neighbors, alias=alias)
+        super().__init__(n_neighbors=n_neighbors, alias=alias)
         if kernel not in KERNELS:
             raise ValueError(f"Unknown kernel {kernel!r}. Valid: {sorted(KERNELS)}.")
         if candidate_mode not in ('all', 'knn', 'radius'):
             raise ValueError(f"candidate_mode must be 'all', 'knn' or 'radius', got {candidate_mode!r}.")
         if candidate_mode == 'radius' and radius is None:
             raise ValueError("candidate_mode='radius' requires `radius`.")
-        if isinstance(bandwidth, (int, float)) and bandwidth <= 0:
+        if isinstance(bandwidth, int | float) and bandwidth <= 0:
             raise ValueError(f'bandwidth must be positive, got {bandwidth!r}.')
         self.kernel = kernel
         self.bandwidth = bandwidth
@@ -87,7 +87,7 @@ class KernelMatcher(BaseMatcher):
         return [(nbr[i], dist[i]) for i in range(treated_emb.shape[0])]
 
     def _bandwidth(self, candidates: list[tuple[np.ndarray, np.ndarray]]) -> float:
-        if isinstance(self.bandwidth, (int, float)):
+        if isinstance(self.bandwidth, int | float):
             return float(self.bandwidth)
         # Median candidate distance: a robust scale that keeps bounded-support
         # kernels (epanechnikov/triangular/uniform) from collapsing to all-zero.
@@ -116,7 +116,7 @@ class KernelMatcher(BaseMatcher):
         treated_keep: list[int] = []
         control_weight = np.zeros(control_idx.size, dtype=float)
         matrix: list[tuple[int, int, float]] = []
-        for global_t, (positions, dist) in zip(treated_idx, candidates):
+        for global_t, (positions, dist) in zip(treated_idx, candidates, strict=False):
             if len(positions) == 0:
                 continue
             w = kernel_fn(np.asarray(dist, dtype=float) / bandwidth)
@@ -126,7 +126,7 @@ class KernelMatcher(BaseMatcher):
             if self.normalize:
                 w = w / total
             treated_keep.append(int(global_t))
-            for pos, wj in zip(positions, w):
+            for pos, wj in zip(positions, w, strict=False):
                 if wj > 0:
                     control_weight[pos] += wj
                     matrix.append((int(global_t), int(control_idx[pos]), float(wj)))

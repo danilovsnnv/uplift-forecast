@@ -35,7 +35,7 @@ class PropensityScoreMatcher(BaseMatcher):
         replace: bool = True,
         alias: str | None = None,
     ):
-        super(PropensityScoreMatcher, self).__init__(
+        super().__init__(
             n_neighbors=n_neighbors, caliper=caliper, replace=replace, alias=alias,
         )
         if not hasattr(model, 'predict_proba'):

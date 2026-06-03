@@ -84,7 +84,7 @@ class UpliftForecast:
         return pd.DataFrame(result)
 
     @staticmethod
-    def _add_uplift_columns(result: dict, name: str, uplift) -> None:
+    def _add_uplift_columns(result: dict, name: str, uplift: ArrayLike) -> None:
         uplift = np.asarray(uplift)
         if uplift.ndim == 1:
             result[f'uplift_{name}'] = uplift
@@ -93,7 +93,7 @@ class UpliftForecast:
             result[f'uplift_{name}_arm{col + 1}'] = uplift[:, col]
 
     @staticmethod
-    def _add_component_columns(result: dict, name: str, y1) -> None:
+    def _add_component_columns(result: dict, name: str, y1: ArrayLike) -> None:
         y1 = np.asarray(y1)
         if y1.ndim == 1:
             result[f'{name}_y1_pred'] = y1

@@ -62,7 +62,7 @@ class CausalForest(BaseMetaUpliftModel):
         n_estimators: int = 100,
         max_depth: int | None = None,
         min_samples_leaf: int = 5,
-        max_features: float | str | int | None = 'sqrt',
+        max_features: float | str | None = 'sqrt',
         bootstrap: bool = True,
         honest: bool = True,
         min_treated_leaf: int = 1,
@@ -74,7 +74,7 @@ class CausalForest(BaseMetaUpliftModel):
         random_state: int = 0,
         alias: str | None = None,
     ):
-        super(CausalForest, self).__init__(alias=alias)
+        super().__init__(alias=alias)
         if pseudo_outcome not in ('dr', 'ipw'):
             raise ValueError(f"pseudo_outcome must be 'dr' or 'ipw'; got {pseudo_outcome!r}.")
         self.n_estimators = n_estimators
@@ -190,7 +190,7 @@ class CausalForest(BaseMetaUpliftModel):
         """
         if not (0.0 < alpha < 1.0):
             raise ValueError(f'alpha must be in (0, 1); got {alpha}.')
-        from statistics import NormalDist
+        from statistics import NormalDist  # noqa: PLC0415  (lazy: only used by predict_interval)
 
         preds = self._tree_predictions(X)
         tau = preds.mean(axis=0)

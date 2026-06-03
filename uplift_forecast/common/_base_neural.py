@@ -58,7 +58,7 @@ class _PredictDataset(Dataset):
     def __init__(self, tensor: torch.Tensor) -> None:
         self.tensor = tensor
 
-    def __getitem__(self, index):
+    def __getitem__(self, index: int) -> torch.Tensor:
         return self.tensor[index]
 
     def __len__(self):
@@ -122,7 +122,7 @@ class BaseNeuralUpliftModel(LightningModule, UpliftModel):
         dataloader_kwargs: dict | None = None,
         **trainer_kwargs,
     ):
-        super(BaseNeuralUpliftModel, self).__init__()
+        super().__init__()
         self.save_hyperparameters(ignore=['loss', 'valid_loss', 'y_transform', 'y_inv_transform'])
 
         self.input_size = input_size
@@ -301,7 +301,7 @@ class BaseNeuralUpliftModel(LightningModule, UpliftModel):
         x: torch.Tensor,
         treatment: torch.Tensor | None = None,
         y: torch.Tensor | None = None,
-    ):
+    ) -> Any:
         x = self.scaler.transform(x)
         if y is None:
             return x

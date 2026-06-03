@@ -49,7 +49,7 @@ class FeatureScaler(nn.Module):
     """
 
     def __init__(self, scaler_type: str | None = 'robust', eps: float = 1e-6):
-        super(FeatureScaler, self).__init__()
+        super().__init__()
         if scaler_type not in _STATS_FNS:
             raise ValueError(
                 f"Unknown scaler_type='{scaler_type}'. "

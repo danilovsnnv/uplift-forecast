@@ -21,6 +21,8 @@ Conventions
 treat-if-uplift>threshold policy.
 """
 
+from typing import Any
+
 import numpy as np
 from numpy.typing import ArrayLike
 
@@ -155,7 +157,7 @@ _ESTIMATORS = {'ips', 'snips', 'dm', 'dr', 'switch_dr', 'dr_os'}
 
 
 def evaluate_policy(
-    model,
+    model: Any,
     X: ArrayLike,
     treatment: ArrayLike,
     y: ArrayLike,

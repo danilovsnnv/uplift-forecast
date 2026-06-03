@@ -12,6 +12,8 @@ Two model-agnostic tools plus a tree-model helper:
 `shap` is loaded lazily so importing `uplift_forecast` never requires it.
 """
 
+from typing import Any
+
 import numpy as np
 import pandas as pd
 from numpy.typing import ArrayLike
@@ -27,9 +29,9 @@ __all__ = [
 _METRICS = {'auuc': auuc_score, 'qini': qini_score}
 
 
-def _require_shap():
+def _require_shap() -> Any:
     try:
-        import shap
+        import shap  # noqa: PLC0415  (lazy: shap is an optional dependency)
     except ImportError as err:
         raise ImportError(
             'shap is required for uplift_forecast.explain.uplift_shap_values. '
@@ -38,7 +40,7 @@ def _require_shap():
     return shap
 
 
-def uplift_shap_values(model, X: ArrayLike, *, background: ArrayLike | None = None):
+def uplift_shap_values(model: Any, X: ArrayLike, *, background: ArrayLike | None = None) -> Any:
     """SHAP values explaining a model's predicted uplift.
 
     Explains `model.predict(X)` (the uplift itself), so attributions answer
@@ -69,7 +71,7 @@ def _feature_view(X: ArrayLike) -> tuple[np.ndarray, list[str]]:
 
 
 def permutation_importance(
-    model,
+    model: Any,
     X: ArrayLike,
     treatment: ArrayLike,
     y: ArrayLike,
@@ -125,7 +127,7 @@ def permutation_importance(
     ).sort_values('importance_mean', ascending=False)
 
 
-def tree_feature_importance(model, feature_names: list[str] | None = None) -> pd.Series:
+def tree_feature_importance(model: Any, feature_names: list[str] | None = None) -> pd.Series:
     """Native impurity-based feature importance for the forest uplift models.
 
     Averages the per-tree `feature_importances_` of `CausalForest` / `PolicyForest`

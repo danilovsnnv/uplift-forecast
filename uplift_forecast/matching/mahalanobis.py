@@ -59,7 +59,7 @@ class MahalanobisMatcher(BaseMatcher):
         reg: float = 1e-6,
         alias: str | None = None,
     ):
-        super(MahalanobisMatcher, self).__init__(
+        super().__init__(
             n_neighbors=n_neighbors, caliper=caliper, replace=replace, alias=alias,
         )
         self.reg = reg

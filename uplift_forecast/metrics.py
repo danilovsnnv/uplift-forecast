@@ -13,6 +13,8 @@ Conventions
   possible if the model is anti-correlated with the true uplift.
 """
 
+from collections.abc import Callable
+
 import numpy as np
 import pandas as pd
 from numpy.typing import ArrayLike
@@ -130,7 +132,7 @@ def qini_curve(
 
 
 def _normalised_auc(
-    curve_fn,
+    curve_fn: Callable,
     y_true: np.ndarray,
     uplift: np.ndarray,
     treatment: np.ndarray,
@@ -205,7 +207,14 @@ def _multi_arm_uplift(uplift: ArrayLike, treatment: ArrayLike) -> tuple[np.ndarr
     return u, t, treated
 
 
-def _multi_arm_scores(y_true, uplift, treatment, score_fn, *, normalize: bool) -> dict[int, float]:
+def _multi_arm_scores(
+    y_true: ArrayLike,
+    uplift: ArrayLike,
+    treatment: ArrayLike,
+    score_fn: Callable,
+    *,
+    normalize: bool,
+) -> dict[int, float]:
     y = _to_1d_array(y_true, 'y_true').astype(float)
     u, t, treated = _multi_arm_uplift(uplift, treatment)
     scores = {}
@@ -322,7 +331,9 @@ def dose_response_mise(true_curves: ArrayLike, pred_curves: ArrayLike, t_grid: A
         raise ValueError(f'true_curves {true.shape} and pred_curves {pred.shape} must match.')
     if true.shape[1] != len(grid):
         raise ValueError(f'curves have {true.shape[1]} doses but t_grid has {len(grid)}.')
-    integrated = np.trapz((pred - true) ** 2, grid, axis=1)
+    # np.trapz (not np.trapezoid) keeps compatibility with numpy < 2.0, which the
+    # package still supports (numpy>=1.24); trapezoid only exists on numpy >= 2.0.
+    integrated = np.trapz((pred - true) ** 2, grid, axis=1)  # noqa: NPY201
     return float(np.mean(integrated))
 
 
@@ -346,7 +357,7 @@ def _component_metric(
     treatment_col: str,
     y_pred_ct_col: str,
     y_pred_tr_col: str,
-    metric_func,
+    metric_func: Callable,
 ) -> tuple[float, float, float]:
     n = df.shape[0]
     n_tr = int(df[treatment_col].sum())

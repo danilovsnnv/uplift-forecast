@@ -58,7 +58,7 @@ class XLearner(BaseMetaUpliftModel):
         random_state: int = 0,
         alias: str | None = None,
     ):
-        super(XLearner, self).__init__(alias=alias)
+        super().__init__(alias=alias)
         self.model = model
         self.model_treated = model_treated
         self.effect_model = effect_model

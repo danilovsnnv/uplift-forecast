@@ -41,7 +41,7 @@ class EmbeddingMatcher(BaseMatcher):
         replace: bool = True,
         alias: str | None = None,
     ):
-        super(EmbeddingMatcher, self).__init__(
+        super().__init__(
             n_neighbors=n_neighbors, caliper=caliper, replace=replace, alias=alias,
         )
         self.encoder = encoder

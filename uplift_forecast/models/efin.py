@@ -127,7 +127,7 @@ class EFIN(BaseNeuralUpliftModel):
         tau = self.interaction_head(shared * torch.sigmoid(self.treatment_gate))
         return y0, y0 + tau, t_pred
 
-    def _step(self, batch, loss_fn: nn.Module) -> dict:
+    def _step(self, batch: Any, loss_fn: nn.Module) -> dict:
         x, treatment_true, y_true = batch
         x, treatment_true, y_true = self._normalization(x, treatment_true, y_true)
         y0_pred, y1_pred, t_pred = self(x)
@@ -137,7 +137,7 @@ class EFIN(BaseNeuralUpliftModel):
         out['loss_interaction'] = loss_t
         return out
 
-    def predict_step(self, batch, batch_idx: int):
+    def predict_step(self, batch: Any, batch_idx: int) -> tuple:
         del batch_idx
         with torch.no_grad():
             x = self._normalization(batch)

@@ -42,9 +42,9 @@ __all__ = [
 _SELECTION_METRICS = {'auuc': auuc_score, 'qini': qini_score}
 
 
-def _require_optuna():
+def _require_optuna() -> Any:
     try:
-        import optuna
+        import optuna  # noqa: PLC0415  (lazy: optuna is an optional dependency)
     except ImportError as err:
         raise ImportError(
             'optuna is required for uplift_forecast.auto. '
@@ -56,11 +56,11 @@ def _require_optuna():
 class Suggest:
     """Base wrapper around an `optuna.Trial.suggest_*` call."""
 
-    def __init__(self, func, **params):
+    def __init__(self, func: Callable, **params: Any):
         self.func = func
         self.params = params
 
-    def __call__(self, trial, name: str):
+    def __call__(self, trial: Any, name: str) -> Any:
         return self.func(trial, name=name, **self.params)
 
 
@@ -85,7 +85,7 @@ class SuggestInt(Suggest):
 def const_trial_params_split(*params: dict) -> tuple[tuple[dict, ...], tuple[dict, ...]]:
     """Split each dict into `(constants, suggest_spaces)`."""
 
-    def split(params):
+    def split(params: tuple[dict, ...]) -> Any:
         for param in params:
             const = {k: v for k, v in param.items() if not isinstance(v, Suggest)}
             space = {k: v for k, v in param.items() if isinstance(v, Suggest)}
@@ -113,7 +113,7 @@ class OptunaHyperparameterTuner:
 
     def __init__(
         self,
-        func,
+        func: Callable,
         params_space: dict,
         *other_params_spaces: dict,
         n_trials: int = 100,
@@ -134,11 +134,11 @@ class OptunaHyperparameterTuner:
         self.direction = direction
         self.verbose = verbose
 
-    def _get_single_trial_params(self, trial):
+    def _get_single_trial_params(self, trial: Any) -> Any:
         trial_params = {name: fn(trial, name=name) for name, fn in self.params_spaces[0].items()}
         yield self.const_params[0] | trial_params
 
-    def _get_multiple_trial_params(self, trial):
+    def _get_multiple_trial_params(self, trial: Any) -> Any:
         for i, (const_params, space) in enumerate(
             zip(self.const_params, self.params_spaces, strict=False),
         ):
@@ -147,10 +147,10 @@ class OptunaHyperparameterTuner:
             }
             yield const_params | trial_params
 
-    def optimize(self, study=None, **kwargs) -> 'OptunaHyperparameterTuner':
+    def optimize(self, study: Any = None, **kwargs: Any) -> 'OptunaHyperparameterTuner':
         optuna = _require_optuna()
 
-        def objective(trial):
+        def objective(trial: Any) -> Any:
             params_getter = (
                 self._get_multiple_trial_params if self.n_spaces > 1 else self._get_single_trial_params
             )
@@ -251,11 +251,11 @@ class AutoUplift(UpliftModel):
         factory, space = candidate
         return factory, dict(space)
 
-    def _make_split(self, X: Any, t: np.ndarray, y: np.ndarray, eval_set: tuple | None):
+    def _make_split(self, X: Any, t: np.ndarray, y: np.ndarray, eval_set: tuple | None) -> tuple:
         if eval_set is not None:
             xv, tv, yv = eval_set
             return X, t, y, _to_array(xv), _to_numpy_1d(tv), _to_numpy_1d(yv)
-        from sklearn.model_selection import train_test_split
+        from sklearn.model_selection import train_test_split  # noqa: PLC0415  (lazy: only when no eval_set)
 
         idx = np.arange(len(t))
         train_idx, val_idx = train_test_split(

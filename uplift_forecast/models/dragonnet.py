@@ -114,7 +114,7 @@ class DragonNet(BaseNeuralUpliftModel):
         eps = self.epsilon(torch.ones_like(treatment)[:, [0]])
         return y_ct, y_tr, treatment, eps
 
-    def _step(self, batch, loss_fn: nn.Module) -> dict:
+    def _step(self, batch: Any, loss_fn: nn.Module) -> dict:
         x, treatment_true, y_true = batch
         x, treatment_true, y_true = self._normalization(x, treatment_true, y_true)
         y_pred_ct, y_pred_tr, treatment_pred, eps_pred = self(x)
@@ -127,7 +127,7 @@ class DragonNet(BaseNeuralUpliftModel):
             eps=eps_pred,
         )
 
-    def predict_step(self, batch, batch_idx: int):
+    def predict_step(self, batch: Any, batch_idx: int) -> tuple:
         del batch_idx
         with torch.no_grad():
             x = self._normalization(batch)

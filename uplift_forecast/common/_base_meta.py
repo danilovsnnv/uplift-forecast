@@ -12,7 +12,7 @@ from sklearn.model_selection import KFold
 from ._uplift_model import UpliftModel, _row_subset, _to_array, _to_numpy_1d
 
 
-def _resolve_max_features(max_features: float | str | int | None, n_features: int) -> int:
+def _resolve_max_features(max_features: float | str | None, n_features: int) -> int:
     if max_features is None:
         return n_features
     if isinstance(max_features, str):

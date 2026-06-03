@@ -1,4 +1,4 @@
-__all__ = ['UpliftForecast', 'UpliftModel', 'BaseMetaUpliftModel', 'BaseNeuralUpliftModel', 'RERUM']
+__all__ = ['RERUM', 'BaseMetaUpliftModel', 'BaseNeuralUpliftModel', 'UpliftForecast', 'UpliftModel']
 
 from importlib.metadata import version, PackageNotFoundError
 

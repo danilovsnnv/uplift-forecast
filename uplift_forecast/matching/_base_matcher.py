@@ -95,7 +95,7 @@ class BaseMatcher:
 
         treated_keep: list[int] = []
         control_counts: dict[int, int] = {}
-        for global_t, neigh in zip(treated_idx, matches):
+        for global_t, neigh in zip(treated_idx, matches, strict=False):
             if neigh.size == 0:
                 continue
             treated_keep.append(int(global_t))
@@ -130,7 +130,7 @@ class BaseMatcher:
             k = min(self.n_neighbors, n_control)
             dist, nbr = NearestNeighbors(n_neighbors=k).fit(control_emb).kneighbors(treated_emb)
             if self.caliper is None:
-                return [row for row in nbr]
+                return list(nbr)
             return [nbr[i][dist[i] <= self.caliper] for i in range(treated_emb.shape[0])]
 
         # Without replacement: greedy assignment over distance-sorted neighbor lists.
@@ -140,7 +140,7 @@ class BaseMatcher:
         if self.caliper is not None:
             r_dist, r_nbr = nn.radius_neighbors(treated_emb, radius=self.caliper)
             sorted_pairs = []
-            for d_row, n_row in zip(r_dist, r_nbr):
+            for d_row, n_row in zip(r_dist, r_nbr, strict=False):
                 d_arr, n_arr = np.asarray(d_row), np.asarray(n_row, dtype=int)
                 order = np.argsort(d_arr)
                 sorted_pairs.append(n_arr[order])
@@ -152,8 +152,8 @@ class BaseMatcher:
         matches: list[np.ndarray] = []
         for n_sorted in sorted_pairs:
             picks: list[int] = []
-            for c in n_sorted:
-                c = int(c)
+            for raw in n_sorted:
+                c = int(raw)
                 if used[c]:
                     continue
                 picks.append(c)

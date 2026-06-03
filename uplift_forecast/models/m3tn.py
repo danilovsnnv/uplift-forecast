@@ -142,7 +142,7 @@ class M3TN(BaseNeuralUpliftModel):
             columns.append(mu0 + tau)
         return torch.cat(columns, dim=1)
 
-    def _step(self, batch, loss_fn: nn.Module) -> dict:
+    def _step(self, batch: Any, loss_fn: nn.Module) -> dict:
         del loss_fn
         x, treatment_true, y_true = batch
         x, treatment_true, y_true = self._normalization(x, treatment_true, y_true)
@@ -151,7 +151,7 @@ class M3TN(BaseNeuralUpliftModel):
         factual = mu.gather(1, idx)
         return {'loss': F.mse_loss(factual, y_true)}
 
-    def predict_step(self, batch, batch_idx: int):
+    def predict_step(self, batch: Any, batch_idx: int) -> tuple:
         del batch_idx
         with torch.no_grad():
             x = self._normalization(batch)

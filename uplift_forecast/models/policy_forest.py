@@ -58,7 +58,7 @@ class PolicyForest(BaseMetaUpliftModel):
         n_estimators: int = 100,
         max_depth: int | None = None,
         min_samples_leaf: int = 5,
-        max_features: float | str | int | None = 'sqrt',
+        max_features: float | str | None = 'sqrt',
         bootstrap: bool = True,
         honest: bool = True,
         score_method: str = 'dr',
@@ -68,7 +68,7 @@ class PolicyForest(BaseMetaUpliftModel):
         random_state: int = 0,
         alias: str | None = None,
     ):
-        super(PolicyForest, self).__init__(alias=alias)
+        super().__init__(alias=alias)
         if score_method not in ('dr', 'ipw'):
             raise ValueError(f"score_method must be 'dr' or 'ipw'; got {score_method!r}.")
         self.n_estimators = n_estimators
@@ -174,7 +174,7 @@ class PolicyForest(BaseMetaUpliftModel):
         if budget is not None:
             if not 0.0 < budget <= 1.0:
                 raise ValueError(f'budget must be in (0, 1]; got {budget}.')
-            return _top_k_mask(score, int(round(budget * n)))
+            return _top_k_mask(score, round(budget * n))
         if top_k is not None:
             if not 0 <= top_k <= n:
                 raise ValueError(f'top_k must be in [0, {n}]; got {top_k}.')

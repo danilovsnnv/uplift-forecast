@@ -46,7 +46,7 @@ class CoarsenedExactMatcher(BaseMatcher):
         drop_unmatched: bool = True,
         alias: str | None = None,
     ):
-        super(CoarsenedExactMatcher, self).__init__(alias=alias)
+        super().__init__(alias=alias)
         if binning not in ('quantile', 'uniform'):
             raise ValueError(f"binning must be 'quantile' or 'uniform', got {binning!r}.")
         if n_bins < 1:
@@ -78,7 +78,7 @@ class CoarsenedExactMatcher(BaseMatcher):
             is_cat = [c in cat for c in columns]
         return columns, is_cat
 
-    def _column(self, X: np.ndarray | pd.DataFrame, col) -> np.ndarray:
+    def _column(self, X: np.ndarray | pd.DataFrame, col: int | str) -> np.ndarray:
         if isinstance(X, pd.DataFrame):
             return X[col].to_numpy()
         return np.asarray(X)[:, col]
@@ -93,7 +93,7 @@ class CoarsenedExactMatcher(BaseMatcher):
         self._columns, self._is_cat = self._resolve_schema(X)
         self._edges = {}
         self._kept_categories = {}
-        for col, is_cat in zip(self._columns, self._is_cat):
+        for col, is_cat in zip(self._columns, self._is_cat, strict=False):
             values = self._column(X, col)
             if is_cat:
                 if self.rare_threshold is not None:
@@ -111,7 +111,7 @@ class CoarsenedExactMatcher(BaseMatcher):
                     edges = np.linspace(numeric.min(), numeric.max(), self.n_bins + 1)
                 self._edges[col] = edges
 
-    def _coarsen_column(self, X: np.ndarray | pd.DataFrame, col, is_cat: bool) -> np.ndarray:
+    def _coarsen_column(self, X: np.ndarray | pd.DataFrame, col: int | str, is_cat: bool) -> np.ndarray:
         values = self._column(X, col)
         if is_cat:
             labels = values.astype(str)
@@ -130,8 +130,8 @@ class CoarsenedExactMatcher(BaseMatcher):
         y_arr = None if y is None else _to_numpy_1d(y)
         n = t.shape[0]
 
-        coarsened = [self._coarsen_column(X_arr, col, is_cat) for col, is_cat in zip(self._columns, self._is_cat)]
-        keys = list(zip(*[c.tolist() for c in coarsened])) if coarsened else [()] * n
+        coarsened = [self._coarsen_column(X_arr, col, is_cat) for col, is_cat in zip(self._columns, self._is_cat, strict=False)]
+        keys = list(zip(*[c.tolist() for c in coarsened], strict=False)) if coarsened else [()] * n
 
         key_to_id: dict = {}
         strata_ids = np.empty(n, dtype=int)

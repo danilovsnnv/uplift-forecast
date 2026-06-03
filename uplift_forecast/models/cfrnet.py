@@ -333,7 +333,7 @@ class CFRNet(BaseNeuralUpliftModel):
             return [head.module_dict for head in (self.head0, self.head1) if head is not None]
         return [self.joint_head.module_dict] if self.joint_head is not None else []
 
-    def _step(self, batch, loss_fn) -> dict:
+    def _step(self, batch: Any, loss_fn: nn.Module) -> dict:
         features, treatment, factual = batch
         x, treatment_true, y_true = self._normalization(features, treatment, factual)
         propensity = torch.full_like(treatment_true, treatment_true.mean())
@@ -358,7 +358,7 @@ class CFRNet(BaseNeuralUpliftModel):
             self.imb_mat = imb_mat
         return loss
 
-    def predict_step(self, batch, batch_idx: int):
+    def predict_step(self, batch: Any, batch_idx: int) -> tuple:
         del batch_idx
         with torch.no_grad():
             features = self._normalization(batch)

@@ -25,7 +25,7 @@ class TLearner(BaseMetaUpliftModel):
     """
 
     def __init__(self, model: Any, model_treated: Any | None = None, alias: str | None = None):
-        super(TLearner, self).__init__(alias=alias)
+        super().__init__(alias=alias)
         self.model = model
         self.model_treated = model_treated
         self._model_ct = None

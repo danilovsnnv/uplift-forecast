@@ -68,7 +68,7 @@ class RLearner(BaseMetaUpliftModel):
         random_state: int = 0,
         alias: str | None = None,
     ):
-        super(RLearner, self).__init__(alias=alias)
+        super().__init__(alias=alias)
         self.outcome_model = outcome_model
         self.effect_model = effect_model
         self.propensity_model = propensity_model

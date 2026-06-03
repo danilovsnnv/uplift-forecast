@@ -50,7 +50,7 @@ class MahalanobisPSCaliperMatcher(BaseMatcher):
         reg: float = 1e-6,
         alias: str | None = None,
     ):
-        super(MahalanobisPSCaliperMatcher, self).__init__(
+        super().__init__(
             n_neighbors=n_neighbors, caliper=caliper, replace=replace, alias=alias,
         )
         if not hasattr(model, 'predict_proba'):

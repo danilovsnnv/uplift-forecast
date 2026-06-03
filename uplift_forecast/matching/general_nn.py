@@ -48,7 +48,7 @@ class NearestNeighborMatcher(BaseMatcher):
         metric_params: dict | None = None,
         alias: str | None = None,
     ):
-        super(NearestNeighborMatcher, self).__init__(
+        super().__init__(
             n_neighbors=n_neighbors, caliper=caliper, replace=replace, alias=alias,
         )
         if radius is not None:
@@ -88,7 +88,7 @@ class NearestNeighborMatcher(BaseMatcher):
         if self.replace:
             dist, nbr = backend.kneighbors(treated_emb, self.n_neighbors)
             if self.caliper is None:
-                return [row for row in nbr]
+                return list(nbr)
             return [nbr[i][dist[i] <= self.caliper] for i in range(treated_emb.shape[0])]
 
         # Without replacement: greedy assignment over distance-sorted neighbor lists.
@@ -97,7 +97,7 @@ class NearestNeighborMatcher(BaseMatcher):
         if self.caliper is not None:
             r_dist, r_nbr = backend.radius_neighbors(treated_emb, self.caliper)
             sorted_pairs = []
-            for d_row, n_row in zip(r_dist, r_nbr):
+            for d_row, n_row in zip(r_dist, r_nbr, strict=False):
                 d_arr, n_arr = np.asarray(d_row), np.asarray(n_row, dtype=int)
                 order = np.argsort(d_arr)
                 sorted_pairs.append(n_arr[order])
@@ -109,8 +109,8 @@ class NearestNeighborMatcher(BaseMatcher):
         matches: list[np.ndarray] = []
         for n_sorted in sorted_pairs:
             picks: list[int] = []
-            for c in n_sorted:
-                c = int(c)
+            for raw in n_sorted:
+                c = int(raw)
                 if used[c]:
                     continue
                 picks.append(c)
@@ -140,7 +140,7 @@ class NearestNeighborMatcher(BaseMatcher):
 
         treated_keep: list[int] = []
         control_weight: dict[int, float] = {}
-        for global_t, neigh in zip(treated_idx, idxs):
+        for global_t, neigh in zip(treated_idx, idxs, strict=False):
             if len(neigh) == 0:
                 continue
             treated_keep.append(int(global_t))
