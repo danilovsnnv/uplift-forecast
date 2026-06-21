@@ -9,16 +9,16 @@ import pandas as pd
 from sklearn.model_selection import KFold
 
 from ..common._base_meta import BaseMetaUpliftModel
-from ..common._uplift_model import _row_subset
+from ..common._uplift_model import UpliftModel, _row_subset
 
 
 def _oof_predict(estimator: Any, X: np.ndarray | pd.DataFrame, y: np.ndarray, kf: KFold) -> np.ndarray:
-    """Cross-fitted out-of-fold predictions: each row is predicted by a clone never trained on it."""
+    """Cross-fitted out-of-fold outcome means: each row is predicted by a clone never trained on it."""
     oof = np.empty(len(y), dtype=np.float64)
     for train_idx, test_idx in kf.split(np.arange(len(y))):
         clone = deepcopy(estimator)
         clone.fit(_row_subset(X, train_idx), y[train_idx])
-        oof[test_idx] = np.asarray(clone.predict(_row_subset(X, test_idx))).reshape(-1)
+        oof[test_idx] = UpliftModel._predict_outcome(clone, _row_subset(X, test_idx))
     return oof
 
 
@@ -109,7 +109,7 @@ class RLearner(BaseMetaUpliftModel):
             else:
                 e_oof = _oof_predict_proba(self.propensity_model, X, t, kf)
         else:
-            m_oof = np.asarray(self._outcome_fitted.predict(X)).reshape(-1)
+            m_oof = self._predict_outcome(self._outcome_fitted, X)
             if self.propensity_model is None:
                 e_oof = np.full(len(t), float(t.mean()))
             else:

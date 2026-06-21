@@ -43,6 +43,14 @@ _LEARNERS = [
     pytest.param(lambda: SLearner(_gbr()), 0.4, id='SLearner'),
     pytest.param(lambda: TLearner(_gbr()), 0.3, id='TLearner'),
     pytest.param(
+        lambda: SLearner(_gbr(), propensity_model=_propensity(), n_folds=5, random_state=0),
+        0.5, id='SLearner-IPW',
+    ),
+    pytest.param(
+        lambda: TLearner(_gbr(), propensity_model=_propensity(), n_folds=5, random_state=0),
+        0.3, id='TLearner-IPW',
+    ),
+    pytest.param(
         lambda: XLearner(model=_gbr(), propensity_model=_propensity(), n_folds=5, random_state=0),
         0.2, id='XLearner',
     ),
@@ -81,6 +89,21 @@ def test_recovers_known_cate(known_cate_data, build_model, tol):
     uplift = build_model().fit(x, treatment, y).predict(x)
     mae = float(np.mean(np.abs(uplift - true_cate)))
     assert mae < tol, f'CATE MAE {mae:.3f} exceeds tolerance {tol}'
+
+
+@pytest.mark.parametrize('cls', [SLearner, TLearner])
+def test_ipw_fits_and_stores_propensity(known_cate_data, cls):
+    # n_folds=1 exercises the in-sample propensity path; the fitted model is kept for inspection.
+    x, treatment, y, _ = known_cate_data
+    model = cls(_gbr(), propensity_model=_propensity(), n_folds=1).fit(x, treatment, y)
+    assert model._propensity_model is not None
+    assert np.isfinite(model.predict(x)).all()
+
+
+@pytest.mark.parametrize('cls', [SLearner, TLearner])
+def test_ipw_rejects_bad_clip(cls):
+    with pytest.raises(ValueError, match='propensity_clip'):
+        cls(_gbr(), propensity_model=_propensity(), propensity_clip=0.5)
 
 
 def test_policy_forest_ranks_by_cate(known_cate_data):

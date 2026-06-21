@@ -6,8 +6,12 @@ and ports the component MAE/MSE/MAPE metrics from the legacy `src/metrics.py`.
 Conventions
 -----------
 - `uplift` is a 1-D array of predicted individual treatment effects, higher = better.
-- `treatment` is a 1-D 0/1 array.
+  For multi-arm models it is a `[n, K-1]` array (one column per treated arm vs control).
+- `treatment` is a 1-D integer array; `{0, 1}` for binary, `{0, 1, ..., K-1}` (0 = control)
+  for multi-arm.
 - `y_true` is the observed outcome.
+- `auuc_score` / `qini_score` return a single float for binary treatment and a
+  `{arm: score}` dict for multi-arm treatment (one score per treated arm vs control).
 - AUUC and Qini are normalised against the perfect-ordering curve, so values
   in `[0, 1]` are expected on well-calibrated models. Negative values are
   possible if the model is anti-correlated with the true uplift.
@@ -30,8 +34,6 @@ __all__ = [
     'cost_based_targeting_curve',
     'cumulative_gain_curve',
     'dose_response_mise',
-    'multi_arm_auuc_scores',
-    'multi_arm_qini_scores',
     'optimal_treatment_assignment',
     'qini_curve',
     'qini_score',
@@ -156,23 +158,38 @@ def _normalised_auc(
     return float(model_auc / perfect_auc)
 
 
+def _is_multi_arm(uplift: ArrayLike, treatment: ArrayLike) -> bool:
+    """True when inputs describe a multi-arm problem (2-D uplift or non-binary treatment)."""
+    if np.asarray(uplift).ndim > 1:
+        return True
+    arms = np.unique(_to_1d_array(treatment, 'treatment').astype(int))
+    return not np.all(np.isin(arms, [0, 1]))
+
+
 def auuc_score(
     y_true: ArrayLike,
     uplift: ArrayLike,
     treatment: ArrayLike,
     *,
     normalize: bool = True,
-) -> float:
+) -> float | dict[int, float]:
     """Area Under the Uplift Curve.
 
     Args:
         y_true: Observed outcomes.
-        uplift: Predicted individual treatment effects (higher = better).
-        treatment: 0/1 treatment indicator.
-        normalize: If True (default), divide by the area under the
-            perfect-ordering curve so the score is in `[0, 1]` for sensible
-            models.
+        uplift: Predicted individual treatment effects (higher = better). ``[n]`` for binary
+            treatment, ``[n, K-1]`` for multi-arm (one column per treated arm vs control).
+        treatment: Treatment indicator; ``{0, 1}`` for binary, ``{0, .., K-1}`` (0 = control)
+            for multi-arm.
+        normalize: If True (default), divide by the area under the perfect-ordering curve so
+            the score is in `[0, 1]` for sensible models.
+
+    Returns:
+        A single float for binary treatment, or a ``{arm: auuc}`` dict scoring each treated
+        arm on its control-plus-arm subset for multi-arm treatment.
     """
+    if _is_multi_arm(uplift, treatment):
+        return _multi_arm_scores(y_true, uplift, treatment, auuc_score, normalize=normalize)
     y, u, t = _validate_inputs(y_true, uplift, treatment)
     return _normalised_auc(cumulative_gain_curve, y, u, t, normalize=normalize)
 
@@ -183,8 +200,15 @@ def qini_score(
     treatment: ArrayLike,
     *,
     normalize: bool = True,
-) -> float:
-    """Qini coefficient: area under the Qini curve (normalised by default)."""
+) -> float | dict[int, float]:
+    """Qini coefficient: area under the Qini curve (normalised by default).
+
+    Returns a single float for binary treatment, or a ``{arm: qini}`` dict (one score per
+    treated arm vs control) for multi-arm treatment. See :func:`auuc_score` for the argument
+    conventions.
+    """
+    if _is_multi_arm(uplift, treatment):
+        return _multi_arm_scores(y_true, uplift, treatment, qini_score, normalize=normalize)
     y, u, t = _validate_inputs(y_true, uplift, treatment)
     return _normalised_auc(qini_curve, y, u, t, normalize=normalize)
 
@@ -227,32 +251,6 @@ def _multi_arm_scores(
         sub_t = (t[mask] == arm).astype(int)
         scores[arm] = score_fn(y[mask], u[mask, col], sub_t, normalize=normalize)
     return scores
-
-
-def multi_arm_auuc_scores(
-    y_true: ArrayLike,
-    uplift: ArrayLike,
-    treatment: ArrayLike,
-    *,
-    normalize: bool = True,
-) -> dict[int, float]:
-    """Per-arm AUUC for a multi-treatment model (one score per treated arm vs control).
-
-    Each treated arm ``k`` is scored on the control-plus-arm-``k`` subset against
-    its own uplift column. Returns a dict ``{arm: auuc}``.
-    """
-    return _multi_arm_scores(y_true, uplift, treatment, auuc_score, normalize=normalize)
-
-
-def multi_arm_qini_scores(
-    y_true: ArrayLike,
-    uplift: ArrayLike,
-    treatment: ArrayLike,
-    *,
-    normalize: bool = True,
-) -> dict[int, float]:
-    """Per-arm Qini coefficient for a multi-treatment model (dict ``{arm: qini}``)."""
-    return _multi_arm_scores(y_true, uplift, treatment, qini_score, normalize=normalize)
 
 
 def optimal_treatment_assignment(uplift: ArrayLike, costs: ArrayLike | None = None) -> np.ndarray:

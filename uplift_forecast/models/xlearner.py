@@ -116,7 +116,7 @@ class XLearner(BaseMetaUpliftModel):
         tau1 = np.asarray(self._effect_model_treated.predict(X)).reshape(-1)
         e = self._propensity(X, len(tau0))
         tau = e * tau0 + (1.0 - e) * tau1
-        y0 = np.asarray(self._outcome_model_control.predict(X)).reshape(-1)
+        y0 = self._predict_outcome(self._outcome_model_control, X)
         return y0, y0 + tau
 
     def _propensity(self, X: np.ndarray | pd.DataFrame, n: int) -> np.ndarray:

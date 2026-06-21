@@ -83,9 +83,18 @@ class TestInputValidation:
         with pytest.raises(ValueError, match='same length'):
             auuc_score(np.zeros(3), np.zeros(4), np.zeros(3))
 
-    def test_non_binary_treatment_raises(self):
-        with pytest.raises(ValueError, match='binary'):
-            auuc_score(np.zeros(3), np.zeros(3), np.array([0, 1, 2]))
+    @pytest.mark.parametrize('score_fn', [auuc_score, qini_score])
+    def test_multi_arm_treatment_returns_per_arm_dict(self, score_fn):
+        # Non-binary treatment dispatches to the per-arm path (one score per treated arm).
+        rng = np.random.default_rng(0)
+        n = 200
+        t = rng.integers(0, 3, size=n)
+        y = rng.normal(size=n)
+        uplift = rng.normal(size=(n, 2))
+        scores = score_fn(y, uplift, t)
+        assert isinstance(scores, dict)
+        assert set(scores) == {1, 2}
+        assert all(np.isfinite(v) for v in scores.values())
 
     @pytest.mark.parametrize('score_fn', [auuc_score, qini_score])
     def test_accepts_list_inputs(self, score_fn):

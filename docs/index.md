@@ -20,7 +20,8 @@ NumPy arrays or DataFrames and wraps any sklearn-compatible estimator you alread
 - **Neural models** — DragonNet, CFRNet, TARNet; PyTorch + PyTorch Lightning; ZILN revenue
   objectives and IPM representation-balancing included.
 - **Meta-learners** — SLearner, TLearner, XLearner, RLearner, DRLearner, ZLearner; wrap any
-  sklearn-style regressor; no GPU required.
+  sklearn-style regressor; no GPU required. SLearner/TLearner/DRLearner also handle multi-arm
+  treatment (`treatment ∈ {0..K-1}`, 0 = control), returning one uplift column per treated arm.
 - **Forest models** — CausalForest (doubly-robust honest trees with variance estimation) and
   PolicyForest (optimal treatment-policy trees).
 - **Policy learning** — PolicyLearner wraps any CATE estimator and trains a classifier for

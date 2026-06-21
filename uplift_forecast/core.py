@@ -23,7 +23,7 @@ class UpliftForecast:
 
     Example:
         >>> nf = UpliftForecast(models=[TLearner(CatBoostRegressor()), CFRNet(42)])
-        >>> nf.fit(X_train, t_train, y_train, val_df=(X_val, t_val, y_val))
+        >>> nf.fit(X_train, t_train, y_train, eval_set=(X_val, t_val, y_val))
         >>> preds = nf.predict(X_test)
     """
 
@@ -41,7 +41,7 @@ class UpliftForecast:
         X: ArrayLike,
         treatment: ArrayLike,
         y: ArrayLike,
-        val_df: tuple | None = None,
+        eval_set: tuple | None = None,
         **fit_params,
     ) -> 'UpliftForecast':
         """Fit every model on (X, treatment, y).
@@ -50,11 +50,11 @@ class UpliftForecast:
             X: Feature matrix.
             treatment: Binary treatment vector (0/1).
             y: Outcome vector.
-            val_df: Optional (X_val, treatment_val, y_val) forwarded as eval_set.
+            eval_set: Optional (X_val, treatment_val, y_val) forwarded as eval_set.
             **fit_params: Passed through to each model's fit method.
         """
         for model in self.models:
-            model.fit(X, treatment, y, eval_set=val_df, **fit_params)
+            model.fit(X, treatment, y, eval_set=eval_set, **fit_params)
         return self
 
     def predict(

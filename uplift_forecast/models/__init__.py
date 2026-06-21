@@ -9,8 +9,6 @@ __all__ = [
     'DRNet',
     'DragonNet',
     'FlexTENet',
-    'MultiSLearner',
-    'MultiTLearner',
     'PolicyForest',
     'PolicyLearner',
     'RLearner',
@@ -36,7 +34,6 @@ from .efin import EFIN
 from .euen import EUEN
 from .flextenet import FlexTENet
 from .m3tn import M3TN
-from .multi_learner import MultiSLearner, MultiTLearner
 from .policy_forest import PolicyForest
 from .policy_learner import PolicyLearner
 from .rlearner import RLearner

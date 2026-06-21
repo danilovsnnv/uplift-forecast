@@ -130,31 +130,31 @@ extension.
 | **Multi-treatment cost optimization** ✅ | [arXiv:1908.05372](https://arxiv.org/abs/1908.05372) (Zhao & Harinen, Uber) | **CausalML** | Multiple treatment groups with different costs (channels × promo types) + cost optimization. Foundational; the meta-learner generalization is straightforward. |
 | Multi-arm meta-learners | — | CausalML, EconML | S/T/R/DR-learners extend to K arms (one-vs-base). |
 
-**Code sketch** (multi-arm meta-learner, minimal API change):
+**Design** (implemented): the arm decomposition lives in `common/_base_meta.py::_BaseMultiArmLearner`,
+which `SLearner` / `TLearner` / `DRLearner` subclass — there are **no** separate `Multi*` classes.
+`treatment` may be an integer in `{0..K-1}` (0 = control); `predict` returns `[n, K-1]` uplift columns,
+collapsing to a flat `[n]` array in the binary (K=2) case, and `UpliftForecast` emits
+`uplift_<model>_arm{k}`. Subclasses implement `_fit_arms` / `_predict_arm`; the binary
+`_fit_estimators` / `_predict_components` template (`BaseMetaUpliftModel`) is reserved for the
+binary-intrinsic learners (R/X/Z, policy, tree, forests).
 
 ```python
-# treatment becomes int in {0..K-1}; predict returns uplift per arm vs control
-class MultiTLearner(BaseMetaUpliftModel):
-    def fit(self, X, treatment, y, eval_set=None, **fit_params):
-        self.arms_ = sorted(set(treatment))            # 0 = control
-        self.models_ = {k: clone(self.base) for k in self.arms_}
-        for k in self.arms_:
-            mask = treatment == k
-            self.models_[k].fit(X[mask], y[mask])
-    def predict(self, X, *, return_components=False):
-        mu0 = self.models_[0].predict(X)
-        uplift = np.stack([self.models_[k].predict(X) - mu0
-                           for k in self.arms_ if k != 0], axis=1)   # [n, K-1]
-        return uplift
+class TLearner(_BaseMultiArmLearner):
+    def _fit_arms(self, X, treatment, y, eval_set=None, **fit_params):
+        for arm in self.arms_:                         # 0 = control
+            template = self.model if arm == 0 else (self.model_treated or self.model)
+            self._models[arm] = deepcopy(template).fit(X[treatment == arm], y[treatment == arm])
+    def _predict_arm(self, X, arm):
+        return self._predict_outcome(self._models[arm], X)
 ```
 
-**TODO (Topic 3):**
-1. Decide the contract extension: allow integer `treatment ∈ {0..K-1}` (0 = control);
-   `predict` returns `[n, K-1]` uplift columns; `UpliftForecast` emits `uplift_<model>_arm{k}`.
-   Keep binary as the K=2 special case (backward compatible).
-2. Generalize metrics: per-arm AUUC/Qini, plus the Zhao–Harinen cost-aware targeting curve.
-3. Add `MultiTLearner` / `MultiSLearner` (cheap) first; then `M3TN` as the neural option.
-4. Update `metrics._validate_inputs` to accept K-ary treatment for the multi-arm code paths.
+**Status (Topic 3): done.**
+1. ✅ Contract extension: integer `treatment ∈ {0..K-1}` (0 = control); `predict` returns
+   `[n, K-1]` (binary collapses to `[n]`); `UpliftForecast` emits `uplift_<model>_arm{k}`.
+2. ✅ Metrics generalized: `auuc_score` / `qini_score` return a `{arm: score}` dict for multi-arm
+   treatment (a single float for binary), plus the Zhao–Harinen cost-aware targeting curve and
+   `optimal_treatment_assignment`.
+3. ✅ Multi-arm `SLearner` / `TLearner` / `DRLearner`; `M3TN` as the neural option.
 
 ---
 
@@ -346,7 +346,7 @@ class AutoUplift:
     validation AUUC/Qini (or DR-OPE policy value); best (or top-k ensemble) is returned.
     """
     def __init__(self, candidates, spaces, *, metric='qini', n_trials=50, cv=3): ...
-    def fit(self, X, treatment, y, val_df=None):
+    def fit(self, X, treatment, y, eval_set=None):
         # for each candidate: tune -> refit -> score on val -> leaderboard
         self.leaderboard_ = ...      # DataFrame: model, best_params, val_metric
         self.best_model_ = ...

@@ -68,3 +68,16 @@ class UpliftModel:
     ) -> np.ndarray | tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Predict uplift. If return_components=True, return (uplift, y0, y1)."""
         raise NotImplementedError
+
+    @staticmethod
+    def _predict_outcome(estimator: Any, X: ArrayLike) -> np.ndarray:
+        """Predict the outcome estimate E[Y|x] from a fitted outcome estimator.
+
+        For a probabilistic classifier this is ``predict_proba(X)[:, 1]`` (the positive-class
+        probability P(Y=1|x) for a binary outcome); for a regressor it is ``predict(X)``. Lets the
+        meta-learners take either a classifier or a regressor as the outcome model without the
+        caller wrapping it.
+        """
+        if hasattr(estimator, 'predict_proba'):
+            return np.asarray(estimator.predict_proba(X))[:, 1]
+        return np.asarray(estimator.predict(X)).reshape(-1)

@@ -65,9 +65,9 @@ def test_save_load_roundtrip_preserves_predictions(uplift_data, tmp_path):
     pd.testing.assert_frame_equal(before, after)
 
 
-def test_val_df_and_fit_params_are_forwarded(uplift_data):
+def test_eval_set_and_fit_params_are_forwarded(uplift_data):
     # A stub model records what fit() received, proving UpliftForecast forwards
-    # val_df as eval_set and passes **fit_params through untouched.
+    # eval_set and passes **fit_params through untouched.
     x, treatment, y = uplift_data
 
     class _Recorder(UpliftModel):
@@ -83,7 +83,7 @@ def test_val_df_and_fit_params_are_forwarded(uplift_data):
 
     recorder = _Recorder()
     val = (x[:50], treatment[:50], y[:50])
-    UpliftForecast(models=[recorder]).fit(x, treatment, y, val_df=val, sample_weight='w')
+    UpliftForecast(models=[recorder]).fit(x, treatment, y, eval_set=val, sample_weight='w')
     assert recorder.seen_eval_set is val
     assert recorder.seen_fit_params == {'sample_weight': 'w'}
 

@@ -16,14 +16,12 @@ from uplift_forecast.auto import AutoUplift
 from uplift_forecast.metrics import (
     auuc_score,
     best_dose,
-    multi_arm_auuc_scores,
     optimal_treatment_assignment,
 )
 from uplift_forecast.models import (
     EFIN,
     VCNet,
     CausalForest,
-    MultiTLearner,
     SLearner,
     TLearner,
 )
@@ -84,9 +82,9 @@ def main() -> None:
     arm = rng.integers(0, 3, size=len(x))
     y_multi = (2.0 * x[:, 0] + (arm == 1) * x[:, 1] + (arm == 2) * 2.0 * np.clip(x[:, 2], 0, None)
                + rng.normal(size=len(x))).astype('float32')
-    multi = MultiTLearner(GradientBoostingRegressor(random_state=0)).fit(x, arm, y_multi)
+    multi = TLearner(GradientBoostingRegressor(random_state=0)).fit(x, arm, y_multi)
     uplift_multi = multi.predict(x)
-    print('per-arm AUUC:', {k: round(v, 4) for k, v in multi_arm_auuc_scores(y_multi, uplift_multi, arm).items()})
+    print('per-arm AUUC:', {k: round(v, 4) for k, v in auuc_score(y_multi, uplift_multi, arm).items()})
     assignment = optimal_treatment_assignment(uplift_multi, costs=[0.2, 0.5])
     print('cost-aware assignment counts:', dict(zip(*np.unique(assignment, return_counts=True), strict=True)))
 
