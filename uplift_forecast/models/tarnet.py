@@ -11,11 +11,12 @@ from torch.optim.lr_scheduler import LRScheduler
 
 from ..common._base_neural import BaseNeuralUpliftModel
 from ..common._modules import _FcnBlock, _FcnHead
+from ..common._multiarm_neural import _MultiArmNeuralMixin
 from ..losses import MSELoss
 
 
-class TARNet(BaseNeuralUpliftModel):
-    """Treatment-Agnostic Representation Network (Shalit et al., 2017).
+class TARNet(_MultiArmNeuralMixin, BaseNeuralUpliftModel):
+    """Treatment-Agnostic Representation Network (Shalit et al., 2017), binary or multi-arm.
 
     A shared representation Φ feeds two separate outcome heads (control /
     treatment). The model is trained on the factual outcome loss only — it is the
@@ -26,8 +27,16 @@ class TARNet(BaseNeuralUpliftModel):
     any compatible loss (e.g. `uplift_forecast.frameworks.RERUM` swaps in a ZILN
     ranking objective without TARNet needing to know about it).
 
+    With `n_treatments > 2` the shared representation feeds M3TN-style additive heads
+    (a control head plus one direct-uplift head per treated arm, `mu_k = mu_0 + tau_k`)
+    trained on the factual point MSE, and `predict` returns `[n, n_treatments-1]`
+    (one uplift column per treated arm vs control).
+
     Args:
         input_size: Number of input features.
+        n_treatments: Total number of arms including control (`K`, so `K >= 2`). With
+            `K = 2` it is the standard binary TARNet (two heads, any compatible loss);
+            with `K > 2` it switches to the multi-arm additive-head point-MSE path.
         hidden_size: Width of the representation layers.
         activation: Non-linearity for representation and head layers (paper uses ELU).
         loss: Training loss; defaults to `MSELoss()` (factual regression).
@@ -53,6 +62,7 @@ class TARNet(BaseNeuralUpliftModel):
     def __init__(
         self,
         input_size: int,
+        n_treatments: int = 2,
         hidden_size: int = 200,
         activation: str = 'ELU',
         loss: nn.Module | None = None,
@@ -74,6 +84,8 @@ class TARNet(BaseNeuralUpliftModel):
         head_hidden_size: int | None = None,
         **trainer_kwargs,
     ):
+        if n_treatments < 2:
+            raise ValueError(f'n_treatments must be >= 2 (control + >=1 treated); got {n_treatments}.')
         super().__init__(
             input_size=input_size,
             hidden_size=hidden_size,
@@ -94,6 +106,7 @@ class TARNet(BaseNeuralUpliftModel):
             dataloader_kwargs=dataloader_kwargs,
             **trainer_kwargs,
         )
+        self.n_treatments = n_treatments
         self.rep_n_layers = rep_n_layers
         self.head_n_layers = head_n_layers
         self.head_hidden_size = head_hidden_size or hidden_size
@@ -105,19 +118,30 @@ class TARNet(BaseNeuralUpliftModel):
         self._build_output_heads()
 
     def _build_output_heads(self) -> None:
-        self.head0 = self._make_head()
-        self.head1 = self._make_head()
+        if self._is_multi_arm:
+            self._build_additive_heads(self._make_arm_head)
+        else:
+            self.head0 = self._make_head()
+            self.head1 = self._make_head()
 
     def _make_head(self) -> _FcnHead:
         return _FcnHead(
             self._rep_dim, self.head_hidden_size, self._outcome_size, self.head_n_layers, self._activation,
         )
 
+    def _make_arm_head(self) -> _FcnHead:
+        return _FcnHead(self._rep_dim, self.head_hidden_size, 1, self.head_n_layers, self._activation)
+
+    def _multiarm_representation(self, x: torch.Tensor) -> torch.Tensor:
+        return self.representation(x)
+
     def forward(self, features: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         rep = self.representation(features)
         return self.head0(rep), self.head1(rep)
 
     def _step(self, batch: Any, loss_fn: nn.Module) -> dict:
+        if self._is_multi_arm:
+            return self._multiarm_factual_step(batch)
         x, treatment_true, y_true = batch
         x, treatment_true, y_true = self._normalization(x, treatment_true, y_true)
         y0_pred, y1_pred = self(x)
@@ -125,9 +149,16 @@ class TARNet(BaseNeuralUpliftModel):
 
     def predict_step(self, batch: Any, batch_idx: int) -> tuple:
         del batch_idx
+        if self._is_multi_arm:
+            return self._multiarm_predict_step(batch)
         with torch.no_grad():
             x = self._normalization(batch)
             y0_pred, y1_pred = self(x)
             y0_pred = self._inv_normalization(self._decode_outcome(y0_pred))
             y1_pred = self._inv_normalization(self._decode_outcome(y1_pred))
         return y0_pred, y1_pred
+
+    def predict(self, X: Any, *, return_components: bool = False) -> Any:
+        if self._is_multi_arm:
+            return self._multiarm_predict(X, return_components=return_components)
+        return super().predict(X, return_components=return_components)

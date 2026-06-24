@@ -55,3 +55,32 @@ def test_raw_estimators_finite():
 def test_pscore_must_be_positive():
     with pytest.raises(ValueError):
         ope.ips([1.0], [1], [0.0], [1])
+
+
+@pytest.fixture
+def multi_policy_setup():
+    rng = np.random.default_rng(0)
+    n, p = 500, 6
+    x = rng.normal(size=(n, p))
+    treatment = rng.integers(0, 3, size=n)
+    y = (
+        x[:, 0]
+        + (treatment == 1) * np.clip(x[:, 1], 0, None)
+        + (treatment == 2) * 0.5 * x[:, 2]
+        + rng.normal(size=n)
+    )
+    model = TLearner(GradientBoostingRegressor(random_state=0)).fit(x, treatment, y)
+    gps = np.full((n, 3), 1 / 3.0)  # uniform generalized propensity for the 3-arm setup
+    return model, x, treatment, y, gps
+
+
+@pytest.mark.parametrize('estimator', ESTIMATORS)
+def test_evaluate_policy_multi_arm_finite(estimator, multi_policy_setup):
+    model, x, treatment, y, gps = multi_policy_setup
+    assert np.isfinite(ope.evaluate_policy(model, x, treatment, y, gps, estimator=estimator))
+
+
+def test_multi_arm_requires_matrix_propensity(multi_policy_setup):
+    model, x, treatment, y, _ = multi_policy_setup
+    with pytest.raises(ValueError, match='generalized-propensity'):
+        ope.evaluate_policy(model, x, treatment, y, np.full(len(treatment), 1 / 3.0), estimator='dr')

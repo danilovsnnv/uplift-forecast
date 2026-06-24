@@ -4,22 +4,19 @@ __all__ = ['M3TN']
 from functools import partial
 from typing import Any
 
-import numpy as np
 import torch
 import torch.nn.functional as F
-from numpy.typing import ArrayLike
-from pytorch_lightning import Trainer
 from torch import nn
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
-from ..common._base_neural import BaseNeuralUpliftModel, _PredictDataset, _to_float32
-from ..common._data_module import UpliftDataModule
+from ..common._base_neural import BaseNeuralUpliftModel
 from ..common._modules import _FcnBlock, _FcnHead
+from ..common._multiarm_neural import _MultiArmNeuralMixin
 from ..losses import MSELoss
 
 
-class M3TN(BaseNeuralUpliftModel):
+class M3TN(_MultiArmNeuralMixin, BaseNeuralUpliftModel):
     """Multiple-treatment Meta-learning network (M3TN, ICASSP 2024, arXiv:2401.14426).
 
     A shared Multi-gate Mixture-of-Experts (MMoE) representation feeds an additive
@@ -123,62 +120,27 @@ class M3TN(BaseNeuralUpliftModel):
         self._build_output_heads()
 
     def _build_output_heads(self) -> None:
-        self.control_head = _FcnHead(self.hidden_size, self.head_hidden_size, 1, self.head_n_layers, self._activation)
-        self.uplift_heads = nn.ModuleList(
-            _FcnHead(self.hidden_size, self.head_hidden_size, 1, self.head_n_layers, self._activation)
-            for _ in range(self.n_treatments - 1)
-        )
+        self._build_additive_heads(self._make_arm_head)
+
+    def _make_arm_head(self) -> _FcnHead:
+        return _FcnHead(self.hidden_size, self.head_hidden_size, 1, self.head_n_layers, self._activation)
 
     def _arm_representation(self, expert_out: torch.Tensor, arm: int, x: torch.Tensor) -> torch.Tensor:
         weights = F.softmax(self.gates[arm](x), dim=1).unsqueeze(-1)
         return (weights * expert_out).sum(dim=1)
 
-    def forward(self, features: torch.Tensor) -> torch.Tensor:
-        expert_out = torch.stack([expert(features) for expert in self.experts], dim=1)
-        mu0 = self.control_head(self._arm_representation(expert_out, 0, features))
-        columns = [mu0]
-        for arm, head in enumerate(self.uplift_heads, start=1):
-            tau = head(self._arm_representation(expert_out, arm, features))
-            columns.append(mu0 + tau)
-        return torch.cat(columns, dim=1)
+    def _multiarm_representation(self, x: torch.Tensor) -> list[torch.Tensor]:
+        expert_out = torch.stack([expert(x) for expert in self.experts], dim=1)
+        return [self._arm_representation(expert_out, arm, x) for arm in range(self.n_treatments)]
 
     def _step(self, batch: Any, loss_fn: nn.Module) -> dict:
-        del loss_fn
-        x, treatment_true, y_true = batch
-        x, treatment_true, y_true = self._normalization(x, treatment_true, y_true)
-        mu = self(x)
-        idx = treatment_true.long().clamp(0, self.n_treatments - 1)
-        factual = mu.gather(1, idx)
-        return {'loss': F.mse_loss(factual, y_true)}
+        del loss_fn  # M3TN always trains on the factual point MSE
+        return self._multiarm_factual_step(batch)
 
     def predict_step(self, batch: Any, batch_idx: int) -> tuple:
         del batch_idx
-        with torch.no_grad():
-            x = self._normalization(batch)
-            mu = self._inv_normalization(self(x))
-        return (mu,)
+        return self._multiarm_predict_step(batch)
 
-    def predict(
-        self,
-        X: ArrayLike,
-        *,
-        return_components: bool = False,
-    ) -> np.ndarray | tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def predict(self, X: Any, *, return_components: bool = False) -> Any:
         """Predict per-arm uplift vs control as ``[n, K-1]`` (flat ``[n]`` when K=2)."""
-        dataset = _PredictDataset(torch.from_numpy(_to_float32(X)))
-        datamodule = UpliftDataModule(
-            predict_dataset=dataset,
-            valid_batch_size=self.valid_batch_size,
-            **self.dataloader_kwargs,
-        )
-        trainer = Trainer(**self.trainer_kwargs)
-        fcsts = trainer.predict(self, datamodule=datamodule)
-        mu = torch.vstack([part[0] for part in fcsts]).cpu().numpy()
-        y0 = mu[:, 0]
-        y1 = mu[:, 1:]
-        uplift = y1 - y0[:, None]
-        if uplift.shape[1] == 1:
-            uplift, y1 = uplift[:, 0], y1[:, 0]
-        if return_components:
-            return uplift, y0, y1
-        return uplift
+        return self._multiarm_predict(X, return_components=return_components)

@@ -17,9 +17,11 @@ def _to_numpy_1d(arr: ArrayLike) -> np.ndarray:
 
 
 def _to_array(arr: ArrayLike) -> np.ndarray | pd.DataFrame:
-    """Pass DataFrames through unchanged so sklearn estimators keep feature names."""
+    """Pass pandas DataFrames through (so sklearn keeps feature names); convert polars to numpy."""
     if isinstance(arr, pd.DataFrame):
         return arr
+    if hasattr(arr, 'to_numpy') and not isinstance(arr, np.ndarray):
+        return arr.to_numpy()
     return np.asarray(arr)
 
 

@@ -9,7 +9,7 @@ import pandas as pd
 from sklearn.model_selection import KFold
 from sklearn.tree import DecisionTreeRegressor
 
-from ..common._base_meta import BaseMetaUpliftModel, _resolve_max_features
+from ..common._base_meta import _BaseMultiArmLearner, _resolve_max_features
 from ..common._uplift_model import _to_array
 
 # Shallow defaults for the internal outcome nuisances feeding the DR pseudo-outcome;
@@ -18,7 +18,7 @@ _NUISANCE_MAX_DEPTH = 5
 _NUISANCE_MIN_SAMPLES_LEAF = 10
 
 
-class CausalForest(BaseMetaUpliftModel):
+class CausalForest(_BaseMultiArmLearner):
     """Causal forest for heterogeneous treatment effects (Wager & Athey, 2018; GRF, 2019).
 
     A lighter, sklearn-based approximation of a causal forest: a bag of
@@ -33,8 +33,11 @@ class CausalForest(BaseMetaUpliftModel):
     by ordinary squared-error reduction on the pseudo-outcome -- but it preserves the
     honest, ensemble, leaf-contrast structure of a causal forest.
 
-    ``predict`` reports y0 = 0 and y1 = tau(x); ``predict_variance`` returns the
-    across-tree variance as a simple uncertainty estimate.
+    With ``K`` arms an independent forest is grown per treated arm vs control on its
+    ``{0, k}`` subset, and ``predict`` returns ``[n, K-1]`` (collapsing to a flat
+    ``[n]`` in the binary case). ``predict`` reports y0 = 0 and y1 = tau(x);
+    ``predict_variance`` / ``predict_interval`` return the across-tree spread per arm
+    (matching the ``predict`` shape).
 
     Args:
         n_estimators (int): Number of trees in the forest.
@@ -91,31 +94,35 @@ class CausalForest(BaseMetaUpliftModel):
         self.propensity_clip = propensity_clip
         self.random_state = random_state
 
-        self.causal_trees: list[dict] = []
+        self._arm_forests: dict[int, list[dict]] = {}
 
-    def _fit_estimators(
-        self,
-        X: np.ndarray | pd.DataFrame,
-        treatment: np.ndarray,
-        y: np.ndarray,
-        eval_set: tuple | None,
-        **fit_params: Any,
+    @property
+    def causal_trees(self) -> list[dict]:
+        """All per-arm trees flattened into one ensemble (used by feature-importance tooling)."""
+        return [tree for forest in self._arm_forests.values() for tree in forest]
+
+    def _fit_arms(
+        self, X: Any, treatment: np.ndarray, y: np.ndarray, eval_set: tuple | None = None, **fit_params: Any,
     ) -> None:
+        del eval_set, fit_params
         x = np.asarray(_to_array(X), dtype=np.float64)
         t = treatment.astype(int)
         y = y.astype(np.float64)
-        _, p = x.shape
-        if not (t == 0).any() or not (t == 1).any():
-            raise ValueError('CausalForest requires both treated and control samples in the data.')
+        n_features = x.shape[1]
+        self._arm_forests = {}
+        for arm in self.arms_[1:]:
+            mask = (t == 0) | (t == arm)
+            self._arm_forests[arm] = self._fit_forest(x[mask], (t[mask] == arm).astype(int), y[mask], n_features)
 
+    def _fit_forest(self, x: np.ndarray, t: np.ndarray, y: np.ndarray, n_features: int) -> list[dict]:
         psi = self._pseudo_outcome(x, t, y)
-        k = _resolve_max_features(self.max_features, p)
-
-        self.causal_trees = []
+        k = _resolve_max_features(self.max_features, n_features)
+        forest = []
         for i in range(self.n_estimators):
             rng = np.random.default_rng(self.random_state + i)
-            feat = np.sort(rng.choice(p, size=k, replace=False))
-            self.causal_trees.append(self._build_tree(x, t, y, psi, feat, rng))
+            feat = np.sort(rng.choice(n_features, size=k, replace=False))
+            forest.append(self._build_tree(x, t, y, psi, feat, rng))
+        return forest
 
     def _build_tree(
         self,
@@ -159,15 +166,20 @@ class CausalForest(BaseMetaUpliftModel):
         fallback = float(psi[est].mean())
         return {'tree': tree, 'leaf_tau': leaf_tau, 'features': feat, 'fallback': fallback}
 
-    def _predict_components(self, X: np.ndarray | pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
-        tau = self._tree_predictions(X).mean(axis=0)
-        return np.zeros(len(tau), dtype=np.float64), tau
+    def _predict_arm(self, X: Any, arm: int) -> np.ndarray:
+        if arm == 0:
+            return np.zeros(len(X), dtype=np.float64)
+        return self._tree_predictions(X, self._arm_forests[arm]).mean(axis=0)
 
     def predict_variance(self, X: np.ndarray | pd.DataFrame) -> np.ndarray:
-        """Across-tree variance of the per-tree CATE estimates (uncertainty proxy)."""
+        """Across-tree variance of the per-tree CATE estimates (uncertainty proxy).
+
+        Shape matches ``predict``: ``[n]`` for binary treatment, ``[n, K-1]`` per arm.
+        """
         if not self._fitted:
             raise RuntimeError('CausalForest has not been fitted yet. Call .fit() first.')
-        return self._tree_predictions(X).var(axis=0)
+        out = np.stack([self._tree_predictions(X, self._arm_forests[arm]).var(axis=0) for arm in self.arms_[1:]], axis=1)
+        return out[:, 0] if out.shape[1] == 1 else out
 
     def predict_interval(
         self,
@@ -179,7 +191,8 @@ class CausalForest(BaseMetaUpliftModel):
         Builds a normal interval ``tau(x) +/- z * sd(x)`` from the across-tree
         standard deviation of the (honest) per-tree estimates. This is an
         approximate interval from the ensemble spread, not the exact
-        infinitesimal-jackknife interval of GRF.
+        infinitesimal-jackknife interval of GRF. Bounds match ``predict``'s shape
+        (``[n]`` binary, ``[n, K-1]`` per arm).
 
         Args:
             X: Features to score.
@@ -192,16 +205,22 @@ class CausalForest(BaseMetaUpliftModel):
             raise ValueError(f'alpha must be in (0, 1); got {alpha}.')
         from statistics import NormalDist  # noqa: PLC0415  (lazy: only used by predict_interval)
 
-        preds = self._tree_predictions(X)
-        tau = preds.mean(axis=0)
-        sd = preds.std(axis=0)
         z = NormalDist().inv_cdf(1.0 - alpha / 2.0)
-        return tau - z * sd, tau + z * sd
+        lowers, uppers = [], []
+        for arm in self.arms_[1:]:
+            preds = self._tree_predictions(X, self._arm_forests[arm])
+            tau, sd = preds.mean(axis=0), preds.std(axis=0)
+            lowers.append(tau - z * sd)
+            uppers.append(tau + z * sd)
+        lower, upper = np.stack(lowers, axis=1), np.stack(uppers, axis=1)
+        if lower.shape[1] == 1:
+            return lower[:, 0], upper[:, 0]
+        return lower, upper
 
-    def _tree_predictions(self, X: np.ndarray | pd.DataFrame) -> np.ndarray:
+    def _tree_predictions(self, X: np.ndarray | pd.DataFrame, forest: list[dict]) -> np.ndarray:
         x = np.asarray(_to_array(X), dtype=np.float64)
-        preds = np.empty((len(self.causal_trees), len(x)), dtype=np.float64)
-        for j, entry in enumerate(self.causal_trees):
+        preds = np.empty((len(forest), len(x)), dtype=np.float64)
+        for j, entry in enumerate(forest):
             leaves = entry['tree'].apply(x[:, entry['features']])
             leaf_tau, fallback = entry['leaf_tau'], entry['fallback']
             preds[j] = np.array([leaf_tau.get(int(leaf), fallback) for leaf in leaves], dtype=np.float64)

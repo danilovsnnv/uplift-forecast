@@ -9,15 +9,21 @@ import pandas as pd
 from sklearn.model_selection import KFold
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 
-from ..common._base_meta import BaseMetaUpliftModel, _resolve_max_features, _top_k_mask
+from ..common._base_meta import (
+    _aligned_multiclass_proba,
+    _BaseMultiArmLearner,
+    _resolve_max_features,
+    _top_k_mask,
+)
 from ..common._uplift_model import _to_array, _to_numpy_1d
+from ..metrics import optimal_treatment_assignment
 
 # Shallow defaults for the internal outcome nuisances feeding the DR gain score.
 _NUISANCE_MAX_DEPTH = 5
 _NUISANCE_MIN_SAMPLES_LEAF = 10
 
 
-class PolicyForest(BaseMetaUpliftModel):
+class PolicyForest(_BaseMultiArmLearner):
     """Policy forest for treatment-assignment rules (Athey & Wager, 2021; policytree).
 
     A lighter, sklearn-based approximation of a policy forest: a bag of
@@ -31,9 +37,12 @@ class PolicyForest(BaseMetaUpliftModel):
     This is NOT exact policy-value tree optimization, but it preserves the
     DR-score / honest / ensemble structure of a policy forest.
 
-    ``predict`` returns the mean across-tree expected gain (a rankable score);
-    ``assign`` returns the 0/1 recommendation (optionally under a budget or top-k
-    constraint) and ``policy_value`` gives an inverse-propensity off-policy value.
+    With ``K`` arms an independent gain forest is grown per treated arm vs control,
+    and ``predict`` returns the per-arm expected gain ``[n, K-1]`` (a rankable score),
+    collapsing to a flat ``[n]`` in the binary case. ``assign`` returns the chosen arm
+    (``0`` = control, ``k`` = treated arm ``k``; the best positive-gain arm, optionally
+    under a budget or top-k constraint) and ``policy_value`` gives an inverse-propensity
+    off-policy value.
 
     Args:
         n_estimators (int): Number of trees in the forest.
@@ -45,10 +54,10 @@ class PolicyForest(BaseMetaUpliftModel):
         honest (bool): If True, use separate structure/estimation halves and recompute
             each leaf's expected gain and action on the estimation half.
         score_method (str): 'dr' (doubly-robust AIPW) or 'ipw' for the gain score.
-        propensity_model: Optional classifier with predict_proba for e(x)=P(T=1|X).
-            If None, the global treatment rate is used as a constant.
+        propensity_model: Optional classifier with predict_proba for the (per-arm)
+            propensities. If None, the global per-arm rates are used.
         n_folds (int): Folds for cross-fitting the nuisances used by the gain score.
-        propensity_clip (float): Clip e(x) into [propensity_clip, 1 - propensity_clip].
+        propensity_clip (float): Clip each propensity into [propensity_clip, 1 - propensity_clip].
         random_state (int): Base seed; tree i uses random_state + i.
         alias (str): Optional display name for UpliftForecast output columns.
     """
@@ -83,41 +92,45 @@ class PolicyForest(BaseMetaUpliftModel):
         self.propensity_clip = propensity_clip
         self.random_state = random_state
 
-        self.policy_trees: list[dict] = []
+        self._arm_forests: dict[int, list[dict]] = {}
+        self._propensity_fitted: Any | None = None
+        self._global_rates: dict[int, float] = {}
 
-        self._propensity_fitted = None
-        self._global_rate = None
+    @property
+    def policy_trees(self) -> list[dict]:
+        """All per-arm trees flattened into one ensemble (used by feature-importance tooling)."""
+        return [tree for forest in self._arm_forests.values() for tree in forest]
 
-    def _fit_estimators(
-        self,
-        X: np.ndarray | pd.DataFrame,
-        treatment: np.ndarray,
-        y: np.ndarray,
-        eval_set: tuple | None,
-        **fit_params: Any,
+    def _fit_arms(
+        self, X: Any, treatment: np.ndarray, y: np.ndarray, eval_set: tuple | None = None, **fit_params: Any,
     ) -> None:
+        del eval_set, fit_params
         x = np.asarray(_to_array(X), dtype=np.float64)
         t = treatment.astype(int)
         y = y.astype(np.float64)
-        p = x.shape[1]
-        if not (t == 0).any() or not (t == 1).any():
-            raise ValueError('PolicyForest requires both treated and control samples in the data.')
+        n_features = x.shape[1]
+        self._arm_forests = {}
+        for arm in self.arms_[1:]:
+            mask = (t == 0) | (t == arm)
+            self._arm_forests[arm] = self._fit_forest(x[mask], (t[mask] == arm).astype(int), y[mask], n_features)
 
-        gamma = self._gain_score(x, t, y)
-        k = _resolve_max_features(self.max_features, p)
-
-        self.policy_trees = []
-        for i in range(self.n_estimators):
-            rng = np.random.default_rng(self.random_state + i)
-            feat = np.sort(rng.choice(p, size=k, replace=False))
-            self.policy_trees.append(self._build_tree(x, gamma, feat, rng))
-
+        lo, hi = self.propensity_clip, 1.0 - self.propensity_clip
         if self.propensity_model is None:
-            self._global_rate = float(t.mean())
+            self._global_rates = {arm: float(np.clip((t == arm).mean(), lo, hi)) for arm in self.arms_}
             self._propensity_fitted = None
         else:
             self._propensity_fitted = deepcopy(self.propensity_model)
             self._propensity_fitted.fit(x, t)
+
+    def _fit_forest(self, x: np.ndarray, t: np.ndarray, y: np.ndarray, n_features: int) -> list[dict]:
+        gamma = self._gain_score(x, t, y)
+        k = _resolve_max_features(self.max_features, n_features)
+        forest = []
+        for i in range(self.n_estimators):
+            rng = np.random.default_rng(self.random_state + i)
+            feat = np.sort(rng.choice(n_features, size=k, replace=False))
+            forest.append(self._build_tree(x, gamma, feat, rng))
+        return forest
 
     def _build_tree(
         self,
@@ -155,9 +168,10 @@ class PolicyForest(BaseMetaUpliftModel):
         leaf_gain = {int(leaf): float(gamma[est[leaves == leaf]].mean()) for leaf in np.unique(leaves)}
         return {'tree': tree, 'leaf_gain': leaf_gain, 'features': feat, 'const_gain': None, 'fallback': fallback}
 
-    def _predict_components(self, X: np.ndarray | pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
-        score = self._tree_gains(X).mean(axis=0)
-        return np.zeros(len(score), dtype=np.float64), score
+    def _predict_arm(self, X: Any, arm: int) -> np.ndarray:
+        if arm == 0:
+            return np.zeros(len(X), dtype=np.float64)
+        return self._tree_gains(X, self._arm_forests[arm]).mean(axis=0)
 
     def assign(
         self,
@@ -166,20 +180,31 @@ class PolicyForest(BaseMetaUpliftModel):
         budget: float | None = None,
         top_k: int | None = None,
     ) -> np.ndarray:
-        """Binary recommendations; budget (fraction) or top_k override the gain rule."""
+        """Treatment recommendations; budget (fraction) or top_k override the gain rule.
+
+        Returns the chosen arm per unit (``0`` = control, ``k`` = treated arm ``k``).
+        """
         if budget is not None and top_k is not None:
             raise ValueError('Pass at most one of budget or top_k.')
-        score = self._tree_gains(X).mean(axis=0)
+        score = np.asarray(self.predict(X))
+        if score.ndim == 1:
+            return self._budget_mask(score, budget, top_k) if (budget is not None or top_k is not None) \
+                else (score > 0.0).astype(int)
+        best_arm = optimal_treatment_assignment(score)
+        if budget is None and top_k is None:
+            return best_arm
+        targeted = self._budget_mask(score.max(axis=1), budget, top_k)
+        return np.where(targeted == 1, best_arm, 0)
+
+    def _budget_mask(self, score: np.ndarray, budget: float | None, top_k: int | None) -> np.ndarray:
         n = len(score)
         if budget is not None:
             if not 0.0 < budget <= 1.0:
                 raise ValueError(f'budget must be in (0, 1]; got {budget}.')
             return _top_k_mask(score, round(budget * n))
-        if top_k is not None:
-            if not 0 <= top_k <= n:
-                raise ValueError(f'top_k must be in [0, {n}]; got {top_k}.')
-            return _top_k_mask(score, top_k)
-        return (score > 0.0).astype(int)
+        if not 0 <= top_k <= n:
+            raise ValueError(f'top_k must be in [0, {n}]; got {top_k}.')
+        return _top_k_mask(score, top_k)
 
     def policy_value(
         self,
@@ -193,14 +218,23 @@ class PolicyForest(BaseMetaUpliftModel):
         t = _to_numpy_1d(treatment).astype(int)
         y = _to_numpy_1d(y).astype(np.float64)
         pi = self.assign(X) if policy is None else _to_numpy_1d(policy).astype(int)
-        e = self._propensity_predict(X, len(t))
-        p_obs = np.where(pi == 1, e, 1.0 - e)
-        return float(np.mean((t == pi).astype(np.float64) * y / p_obs))
+        gps = self._gps(X)
+        col = {arm: j for j, arm in enumerate(self.arms_)}
+        p_pi = gps[np.arange(len(t)), np.array([col[int(a)] for a in pi])]
+        return float(np.mean((t == pi).astype(np.float64) * y / p_pi))
 
-    def _tree_gains(self, X: np.ndarray | pd.DataFrame) -> np.ndarray:
+    def _gps(self, X: np.ndarray | pd.DataFrame) -> np.ndarray:
+        """Generalized propensity ``[n, len(arms_)]`` (columns by arm order)."""
+        lo, hi = self.propensity_clip, 1.0 - self.propensity_clip
+        if self._propensity_fitted is None:
+            rates = np.array([self._global_rates[arm] for arm in self.arms_])
+            return np.tile(rates, (len(_to_array(X)), 1))
+        return np.clip(_aligned_multiclass_proba(self._propensity_fitted, _to_array(X), self.arms_), lo, hi)
+
+    def _tree_gains(self, X: np.ndarray | pd.DataFrame, forest: list[dict]) -> np.ndarray:
         x = np.asarray(_to_array(X), dtype=np.float64)
-        out = np.empty((len(self.policy_trees), len(x)), dtype=np.float64)
-        for j, entry in enumerate(self.policy_trees):
+        out = np.empty((len(forest), len(x)), dtype=np.float64)
+        for j, entry in enumerate(forest):
             if entry['tree'] is None:
                 out[j] = entry['const_gain']
                 continue
@@ -233,13 +267,6 @@ class PolicyForest(BaseMetaUpliftModel):
             clf.fit(x[train_idx], t[train_idx])
             out[test_idx] = clf.predict_proba(x[test_idx])[:, 1]
         return np.clip(out, lo, hi)
-
-    def _propensity_predict(self, X: np.ndarray | pd.DataFrame, n: int) -> np.ndarray:
-        lo, hi = self.propensity_clip, 1.0 - self.propensity_clip
-        if self._propensity_fitted is None:
-            return np.full(n, np.clip(self._global_rate, lo, hi))
-        x = np.asarray(_to_array(X), dtype=np.float64)
-        return np.clip(self._propensity_fitted.predict_proba(x)[:, 1], lo, hi)
 
     def _oof_arm(self, x: np.ndarray, y: np.ndarray, mask: np.ndarray) -> np.ndarray:
         n = len(y)

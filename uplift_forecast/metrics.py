@@ -29,12 +29,16 @@ from sklearn.metrics import auc, mean_absolute_error, mean_absolute_percentage_e
 _trapezoid = getattr(np, 'trapezoid', None) or np.trapz  # noqa: NPY201
 
 __all__ = [
+    'arm_score_summary',
     'auuc_score',
     'best_dose',
     'cost_based_targeting_curve',
     'cumulative_gain_curve',
     'dose_response_mise',
+    'kendall_uplift',
+    'lift_at_k',
     'optimal_treatment_assignment',
+    'pehe',
     'qini_curve',
     'qini_score',
     'uplift_component_mae',
@@ -80,9 +84,14 @@ def cumulative_gain_curve(
     where `Y_t/c(k)` are cumulative outcomes among the treated/control inside
     the prefix and `n_t/c(k)` their counts.
 
+    For multi-arm inputs (2-D `uplift` or non-binary `treatment`) it returns a
+    `{arm: (x, gain)}` dict, one curve per treated arm on its control-plus-arm subset.
+
     Returns:
         `(x, gain)` arrays of length `n + 1`, with `x[i] = i` and `gain[0] = 0`.
     """
+    if _is_multi_arm(uplift, treatment):
+        return _multi_arm_curves(y_true, uplift, treatment, cumulative_gain_curve)
     y_true, uplift, treatment = _validate_inputs(y_true, uplift, treatment)
     n = len(y_true)
     order = np.argsort(-uplift, kind='stable')
@@ -115,8 +124,11 @@ def qini_curve(
 
         qini(k) = Y_t(k) - Y_c(k) * (n_t(k) / n_c(k))
 
-    Falls back to the absolute treated outcome when the prefix has no controls.
+    Falls back to the absolute treated outcome when the prefix has no controls. For
+    multi-arm inputs it returns a `{arm: (x, qini)}` dict, one curve per treated arm.
     """
+    if _is_multi_arm(uplift, treatment):
+        return _multi_arm_curves(y_true, uplift, treatment, qini_curve)
     y_true, uplift, treatment = _validate_inputs(y_true, uplift, treatment)
     n = len(y_true)
     order = np.argsort(-uplift, kind='stable')
@@ -251,6 +263,108 @@ def _multi_arm_scores(
         sub_t = (t[mask] == arm).astype(int)
         scores[arm] = score_fn(y[mask], u[mask, col], sub_t, normalize=normalize)
     return scores
+
+
+def _multi_arm_curves(
+    y_true: ArrayLike,
+    uplift: ArrayLike,
+    treatment: ArrayLike,
+    curve_fn: Callable,
+) -> dict[int, tuple[np.ndarray, np.ndarray]]:
+    """Per-arm curve on each treated arm's control-plus-arm subset."""
+    y = _to_1d_array(y_true, 'y_true').astype(float)
+    u, t, treated = _multi_arm_uplift(uplift, treatment)
+    curves = {}
+    for col, arm in enumerate(treated):
+        mask = (t == 0) | (t == arm)
+        sub_t = (t[mask] == arm).astype(int)
+        curves[arm] = curve_fn(y[mask], u[mask, col], sub_t)
+    return curves
+
+
+def lift_at_k(
+    y_true: ArrayLike,
+    uplift: ArrayLike,
+    treatment: ArrayLike,
+    k: float = 0.3,
+) -> float | dict[int, float]:
+    """Cumulative gain when targeting the top-``k`` fraction by predicted uplift (LIFT@K).
+
+    The incremental response captured by treating the highest-scored ``k`` share of the
+    population, read off the cumulative-gain curve. Returns a single float for binary
+    treatment or a ``{arm: lift}`` dict for multi-arm treatment.
+
+    Args:
+        y_true: Observed outcomes.
+        uplift: Predicted uplift, ``[n]`` or ``[n, K-1]``.
+        treatment: Treatment indicator (``{0, 1}`` binary or ``{0, .., K-1}`` multi-arm).
+        k: Fraction of the population to target, in ``(0, 1]``.
+    """
+    if not 0.0 < k <= 1.0:
+        raise ValueError(f'k must be a fraction in (0, 1]; got {k}.')
+    if _is_multi_arm(uplift, treatment):
+        curves = _multi_arm_curves(y_true, uplift, treatment, cumulative_gain_curve)
+        return {arm: _gain_at_fraction(x, gain, k) for arm, (x, gain) in curves.items()}
+    x, gain = cumulative_gain_curve(y_true, uplift, treatment)
+    return _gain_at_fraction(x, gain, k)
+
+
+def _gain_at_fraction(x: np.ndarray, gain: np.ndarray, k: float) -> float:
+    return float(gain[round(k * (len(x) - 1))])
+
+
+def pehe(true_effect: ArrayLike, pred_effect: ArrayLike) -> float | dict[int, float]:
+    """Precision in Estimation of Heterogeneous Effect: ``sqrt(mean((tau_hat - tau)^2))``.
+
+    Requires the ground-truth effect, so it is a synthetic-data metric. With 2-D inputs
+    (``[n, K-1]``, columns aligned to sorted treated arms) it returns a ``{arm: pehe}``
+    dict (aggregate it with :func:`arm_score_summary` for mPEHE / sdPEHE).
+
+    Args:
+        true_effect: Ground-truth effect, ``[n]`` or ``[n, K-1]``.
+        pred_effect: Predicted effect, same shape as ``true_effect``.
+    """
+    true = np.asarray(true_effect, dtype=float)
+    pred = np.asarray(pred_effect, dtype=float)
+    if true.shape != pred.shape:
+        raise ValueError(f'true_effect {true.shape} and pred_effect {pred.shape} must match.')
+    if true.ndim == 1:
+        return float(np.sqrt(np.mean((pred - true) ** 2)))
+    return {col + 1: float(np.sqrt(np.mean((pred[:, col] - true[:, col]) ** 2))) for col in range(true.shape[1])}
+
+
+def kendall_uplift(true_effect: ArrayLike, pred_effect: ArrayLike) -> float | dict[int, float]:
+    """Kendall's tau-b rank correlation between predicted and true effect (synthetic-data).
+
+    Measures how well a model *ranks* units by effect. With 2-D inputs it returns a
+    ``{arm: tau}`` dict (aggregate with :func:`arm_score_summary` for mKendall / sdKendall).
+    """
+    from scipy.stats import kendalltau  # noqa: PLC0415  (scipy is a sklearn dependency; lazy)
+
+    true = np.asarray(true_effect, dtype=float)
+    pred = np.asarray(pred_effect, dtype=float)
+    if true.shape != pred.shape:
+        raise ValueError(f'true_effect {true.shape} and pred_effect {pred.shape} must match.')
+    if true.ndim == 1:
+        return float(kendalltau(pred, true).statistic)
+    return {col + 1: float(kendalltau(pred[:, col], true[:, col]).statistic) for col in range(true.shape[1])}
+
+
+def arm_score_summary(scores: float | dict[int, float]) -> tuple[float, float]:
+    """Mean and (population) standard deviation of a per-arm score dict.
+
+    Turns the ``{arm: score}`` dict returned by :func:`auuc_score` / :func:`qini_score`
+    / :func:`pehe` / :func:`kendall_uplift` into the mean-plus-dispersion pair reported
+    in the multi-treatment literature (e.g. mQini / sdQini). A scalar (binary) score
+    returns ``(score, 0.0)``.
+
+    Returns:
+        ``(mean, std)`` over the arms.
+    """
+    if not isinstance(scores, dict):
+        return float(scores), 0.0
+    values = np.asarray(list(scores.values()), dtype=float)
+    return float(values.mean()), float(values.std())
 
 
 def optimal_treatment_assignment(uplift: ArrayLike, costs: ArrayLike | None = None) -> np.ndarray:

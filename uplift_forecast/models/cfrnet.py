@@ -11,7 +11,8 @@ from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
 from ..common._base_neural import BaseNeuralUpliftModel, get_activation_fn
-from ..losses import CFRLoss, safe_sqrt
+from ..common._multiarm_neural import _MultiArmNeuralMixin
+from ..losses import CFRLoss, compute_imbalance, safe_sqrt
 
 
 class _CFRRepresentation(nn.Module):
@@ -142,16 +143,25 @@ class _CFROutcomeHead(nn.Module):
         return self._components
 
 
-class CFRNet(BaseNeuralUpliftModel):
-    """Counterfactual Regression network (Shalit et al., 2017).
+class CFRNet(_MultiArmNeuralMixin, BaseNeuralUpliftModel):
+    """Counterfactual Regression network (Shalit et al., 2017), binary or multi-arm.
 
     A shared representation feeds either two separate outcome heads
     (`split_output=True`) or a single joint head conditioned on treatment.
     Imbalance between treated and control representations is penalised through
     `CFRLoss`'s IPM term.
 
+    With `n_treatments > 2` the shared (normalised) representation feeds M3TN-style
+    additive heads (`mu_k = mu_0 + tau_k`) trained on the factual point MSE, and the
+    IPM imbalance is summed over each treated-arm-vs-control pair (using the
+    `CFRLoss`'s `p_alpha` / `imb_fun` configuration). `predict` returns
+    `[n, n_treatments-1]` (one uplift column per treated arm vs control).
+
     Args:
         input_size: Number of input features.
+        n_treatments: Total number of arms including control (`K`, so `K >= 2`). With
+            `K = 2` it is the standard binary CFRNet; with `K > 2` it switches to the
+            multi-arm additive-head point-MSE path with per-arm-vs-control IPM.
         hidden_size: Width of the representation layers.
         activation: Non-linearity for representation and head layers.
         loss: Training loss; defaults to `CFRLoss()`.
@@ -187,6 +197,7 @@ class CFRNet(BaseNeuralUpliftModel):
     def __init__(
         self,
         input_size: int,
+        n_treatments: int = 2,
         hidden_size: int = 256,
         activation: str = 'ReLU',
         loss: nn.Module | None = None,
@@ -215,6 +226,8 @@ class CFRNet(BaseNeuralUpliftModel):
         weight_init: float = 0.1,
         **trainer_kwargs,
     ):
+        if n_treatments < 2:
+            raise ValueError(f'n_treatments must be >= 2 (control + >=1 treated); got {n_treatments}.')
         super().__init__(
             input_size=input_size,
             hidden_size=hidden_size,
@@ -235,6 +248,7 @@ class CFRNet(BaseNeuralUpliftModel):
             dataloader_kwargs=dataloader_kwargs,
             **trainer_kwargs,
         )
+        self.n_treatments = n_treatments
         self.rep_hidden_size = hidden_size
         self.head_hidden_size = head_hidden_size or hidden_size
         self.n_in = rep_n_layers
@@ -267,6 +281,9 @@ class CFRNet(BaseNeuralUpliftModel):
         self._build_output_heads()
 
     def _build_output_heads(self) -> None:
+        if self._is_multi_arm:
+            self._build_additive_heads(self._make_arm_head)
+            return
         head_kwargs = {
             'hidden_dim': self.head_hidden_size,
             'n_layers': self.n_out,
@@ -284,6 +301,48 @@ class CFRNet(BaseNeuralUpliftModel):
             self.head1 = None
             self.joint_head = _CFROutcomeHead(in_dim=self._rep_dim + 1, **head_kwargs)
         self._head_out_dim = self._outcome_size
+
+    def _make_arm_head(self) -> _CFROutcomeHead:
+        return _CFROutcomeHead(
+            in_dim=self._rep_dim,
+            hidden_dim=self.head_hidden_size,
+            n_layers=self.n_out,
+            nonlin=self._activation,
+            drop_out=self.drop_out,
+            weight_init=self.weight_init,
+            out_dim=1,
+        )
+
+    def _multiarm_representation(self, x: torch.Tensor) -> torch.Tensor:
+        return self._normalize_representation(self.representation(x))
+
+    def _multiarm_imbalance(self, reps_norm: torch.Tensor, treatment: torch.Tensor) -> torch.Tensor:
+        """IPM penalty summed over each treated-arm-vs-control pair (CFRLoss config)."""
+        p_alpha = getattr(self.loss, 'p_alpha', 0.0)
+        if p_alpha <= 0:
+            return reps_norm.new_zeros(())
+        t = treatment.view(-1).long()
+        use_p_correction = getattr(self.loss, 'use_p_correction', False)
+        total = reps_norm.new_zeros(())
+        for arm in range(1, self.n_treatments):
+            mask = (t == 0) | (t == arm)
+            sub_t = (t[mask] == arm).float()
+            if sub_t.sum() == 0 or (sub_t == 0).sum() == 0:
+                continue
+            propensity = torch.full((int(mask.sum()), 1), float(sub_t.mean()) if use_p_correction else 0.5)
+            imb_loss, _, _ = compute_imbalance(
+                reps_norm[mask],
+                sub_t.unsqueeze(1),
+                propensity.to(reps_norm.device),
+                imb_fun=getattr(self.loss, 'imb_fun', 'mmd2_lin'),
+                r_alpha=getattr(self.loss, 'r_alpha', 1.0),
+                rbf_sigma=getattr(self.loss, 'rbf_sigma', 0.1),
+                wass_lambda=getattr(self.loss, 'wass_lambda', 10.0),
+                wass_iterations=getattr(self.loss, 'wass_iterations', 50),
+                wass_bpt=getattr(self.loss, 'wass_bpt', False),
+            )
+            total = total + imb_loss
+        return p_alpha * total
 
     def forward(
         self,
@@ -334,6 +393,8 @@ class CFRNet(BaseNeuralUpliftModel):
         return [self.joint_head.module_dict] if self.joint_head is not None else []
 
     def _step(self, batch: Any, loss_fn: nn.Module) -> dict:
+        if self._is_multi_arm:
+            return self._multiarm_step(batch)
         features, treatment, factual = batch
         x, treatment_true, y_true = self._normalization(features, treatment, factual)
         propensity = torch.full_like(treatment_true, treatment_true.mean())
@@ -358,8 +419,17 @@ class CFRNet(BaseNeuralUpliftModel):
             self.imb_mat = imb_mat
         return loss
 
+    def _multiarm_step(self, batch: Any) -> dict:
+        features, treatment, factual = batch
+        x, treatment_true, y_true = self._normalization(features, treatment, factual)
+        reps_norm = self._normalize_representation(self.representation(x))
+        mu = self._additive_outcomes(reps_norm)
+        return {'loss': self._factual_mse(mu, treatment_true, y_true) + self._multiarm_imbalance(reps_norm, treatment_true)}
+
     def predict_step(self, batch: Any, batch_idx: int) -> tuple:
         del batch_idx
+        if self._is_multi_arm:
+            return self._multiarm_predict_step(batch)
         with torch.no_grad():
             features = self._normalization(batch)
             shape = (features.shape[0], 1)
@@ -368,3 +438,8 @@ class CFRNet(BaseNeuralUpliftModel):
             predictions_t = self._inv_normalization(self._decode_outcome(predictions_t))
             predictions_c = self._inv_normalization(self._decode_outcome(predictions_c))
         return predictions_c, predictions_t
+
+    def predict(self, X: Any, *, return_components: bool = False) -> Any:
+        if self._is_multi_arm:
+            return self._multiarm_predict(X, return_components=return_components)
+        return super().predict(X, return_components=return_components)

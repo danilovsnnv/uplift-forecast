@@ -26,6 +26,8 @@ from typing import Any
 import numpy as np
 from numpy.typing import ArrayLike
 
+from .metrics import optimal_treatment_assignment
+
 __all__ = [
     'direct_method',
     'doubly_robust',
@@ -167,29 +169,38 @@ def evaluate_policy(
     threshold: float = 0.0,
     **estimator_kwargs,
 ) -> float:
-    """Score a fitted `UpliftModel`'s treat-if-uplift>threshold policy via OPE.
+    """Score a fitted `UpliftModel`'s induced policy via OPE (binary or multi-arm).
+
+    For a binary treatment the induced policy treats a unit when its predicted uplift
+    exceeds `threshold`. For a multi-arm treatment (non-binary `treatment`) the policy
+    assigns each unit its best arm via `optimal_treatment_assignment` (argmax uplift),
+    and `threshold` is ignored.
 
     Args:
-        model: A fitted `UpliftModel`. The induced policy treats a unit when its
-            predicted uplift exceeds `threshold`.
+        model: A fitted `UpliftModel`.
         X: Features to score.
-        treatment: Logged 0/1 treatment (the taken action).
+        treatment: Logged taken action — `0/1` (binary) or `{0, .., K-1}` (multi-arm).
         y: Logged outcome (reward).
-        propensity: Behavior propensity `e(x) = P(T=1|x)` per unit.
+        propensity: Behavior propensity. Binary: `e(x) = P(T=1|x)` per unit (1-D).
+            Multi-arm: an `[n, K]` generalized-propensity matrix with `propensity[:, k]
+            = P(T=k|x)` (columns ordered by arm `0..K-1`).
         estimator: One of `'ips'`, `'snips'`, `'dm'`, `'dr'`, `'switch_dr'`, `'dr_os'`.
-        threshold: Uplift cutoff for the induced policy.
+        threshold: Uplift cutoff for the induced policy (binary only).
         **estimator_kwargs: Passed to the chosen estimator (e.g. `tau`, `lambda_`).
 
     Returns:
         The estimated value of the induced policy.
 
     Raises:
-        ValueError: For an unknown estimator.
+        ValueError: For an unknown estimator, or a multi-arm propensity that is not 2-D.
     """
     if estimator not in _ESTIMATORS:
         raise ValueError(f'estimator must be one of {sorted(_ESTIMATORS)}; got {estimator!r}.')
 
     t = _as_1d(treatment, 'treatment').astype(int)
+    if not np.all(np.isin(np.unique(t), [0, 1])):
+        return _evaluate_policy_multi(model, X, t, y, propensity, estimator, **estimator_kwargs)
+
     e = _as_1d(propensity, 'propensity').astype(float)
     pscore = t * e + (1 - t) * (1.0 - e)
 
@@ -203,6 +214,45 @@ def evaluate_policy(
     uplift = np.asarray(uplift).reshape(-1)
     policy_action = (uplift > threshold).astype(int)
     q_hat = np.column_stack([np.asarray(y0).reshape(-1), np.asarray(y1).reshape(-1)])
+
+    if estimator == 'dm':
+        return direct_method(q_hat, policy_action)
+    if estimator == 'dr':
+        return doubly_robust(y, t, pscore, policy_action, q_hat)
+    if estimator == 'switch_dr':
+        return switch_dr(y, t, pscore, policy_action, q_hat, **estimator_kwargs)
+    return dr_os(y, t, pscore, policy_action, q_hat, **estimator_kwargs)
+
+
+def _evaluate_policy_multi(
+    model: Any,
+    X: ArrayLike,
+    t: np.ndarray,
+    y: ArrayLike,
+    propensity: ArrayLike,
+    estimator: str,
+    **estimator_kwargs,
+) -> float:
+    """Multi-arm OPE: argmax-uplift policy scored against the logged generalized propensity."""
+    gps = np.asarray(propensity, dtype=float)
+    if gps.ndim != 2:
+        raise ValueError(
+            'For multi-arm treatment, propensity must be an [n, K] generalized-propensity '
+            'matrix with propensity[:, k] = P(T=k|x); got shape ' + str(gps.shape) + '.',
+        )
+    if np.any(gps <= 0):
+        raise ValueError('propensity must be strictly positive (behavior probability of each arm).')
+    n = len(t)
+    pscore = gps[np.arange(n), t]
+
+    if estimator in _DIRECT_FREE:
+        policy_action = optimal_treatment_assignment(np.asarray(model.predict(X)))
+        fn = ips if estimator == 'ips' else snips
+        return fn(y, t, pscore, policy_action)
+
+    uplift, y0, y1 = model.predict(X, return_components=True)
+    policy_action = optimal_treatment_assignment(np.asarray(uplift))
+    q_hat = np.column_stack([np.asarray(y0).reshape(-1), np.asarray(y1)])
 
     if estimator == 'dm':
         return direct_method(q_hat, policy_action)

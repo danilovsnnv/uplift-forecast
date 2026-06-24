@@ -4,9 +4,8 @@ __all__ = ['UpliftTree']
 from typing import Any
 
 import numpy as np
-import pandas as pd
 
-from ..common._base_meta import BaseMetaUpliftModel
+from ..common._base_meta import _BaseMultiArmLearner
 from ..common._uplift_model import _to_array
 
 _EPS = 1e-6
@@ -29,32 +28,45 @@ def _divergence(p_t: float, p_c: float, criterion: str) -> float:
 
 
 class _Node:
-    __slots__ = ('feature', 'left', 'p_c', 'p_t', 'right', 'threshold')
+    __slots__ = ('feature', 'left', 'rates', 'right', 'threshold')
 
-    def __init__(self, p_t: float, p_c: float):
+    def __init__(self, rates: dict[int, float]):
         self.feature: int | None = None
         self.threshold: float | None = None
         self.left: _Node | None = None
         self.right: _Node | None = None
-        self.p_t = p_t
-        self.p_c = p_c
+        self.rates = rates  # per-arm outcome rate at this node
 
 
-class UpliftTree(BaseMetaUpliftModel):
-    """Uplift decision tree with divergence split criteria (binary outcome).
+class UpliftTree(_BaseMultiArmLearner):
+    """Uplift decision tree with divergence split criteria (binary outcome), binary or multi-arm.
 
-    Grows a single tree whose splits maximise the gain in divergence between the
-    treated and control outcome rates (KL, Euclidean, or Chi-square), as in
-    CausalML's ``UpliftTreeClassifier``. Each leaf reports control / treated rates
-    ``(p_c, p_t)`` and the uplift is ``p_t - p_c``. The outcome must be binary
-    (0/1); this is provided mainly for parity and interpretability.
+    Grows a tree whose splits maximise the gain in divergence between the treated and
+    control outcome rates (KL, Euclidean, or Chi-square), as in CausalML's
+    ``UpliftTreeClassifier``. Each leaf reports per-arm rates and the uplift for arm
+    ``k`` is ``p_k - p_0``. The outcome must be binary (0/1); this is provided mainly
+    for parity and interpretability.
+
+    With ``K`` arms two split strategies are available via ``multi_arm_split``:
+
+    - ``'multi_way'`` — one shared tree whose split criterion sums the divergence of
+      every treated arm against control; each leaf stores all per-arm rates and
+      ``predict`` reports ``y0 = p_0(x)``, ``y1 = [p_k(x)]``.
+    - ``'per_arm'`` — one independent two-arm tree per treated arm vs control; each
+      tree's uplift ``p_k - p_0`` is reported, so ``predict`` reports ``y0 = 0`` and
+      ``y1 = uplift_k`` (no shared baseline across arms).
+
+    With a binary treatment the two strategies coincide (a single two-arm tree) and
+    ``predict`` collapses to a flat ``[n]`` uplift with ``y0 = p_c``, ``y1 = p_t``.
 
     Args:
         max_depth: Maximum tree depth.
         min_samples_leaf: Minimum rows per child node.
-        min_samples_treatment: Minimum treated and control rows per child for a
-            valid divergence estimate.
+        min_samples_treatment: Minimum rows per arm in each child for a valid
+            divergence estimate (enforced for every arm in a ``multi_way`` split).
         criterion: Split criterion — ``'kl'``, ``'ed'`` (Euclidean), or ``'chi'``.
+        multi_arm_split: ``'multi_way'`` (one shared multi-treatment tree) or
+            ``'per_arm'`` (one two-arm tree per treated arm). Only affects ``K > 2``.
         max_candidates: Max candidate thresholds evaluated per feature (quantiles).
         min_gain: Minimum divergence gain to accept a split.
         alias: Optional display name for UpliftForecast output columns.
@@ -66,6 +78,7 @@ class UpliftTree(BaseMetaUpliftModel):
         min_samples_leaf: int = 100,
         min_samples_treatment: int = 10,
         criterion: str = 'kl',
+        multi_arm_split: str = 'multi_way',
         max_candidates: int = 32,
         min_gain: float = 0.0,
         alias: str | None = None,
@@ -73,53 +86,58 @@ class UpliftTree(BaseMetaUpliftModel):
         super().__init__(alias=alias)
         if criterion not in ('kl', 'ed', 'chi'):
             raise ValueError(f"criterion must be one of 'kl', 'ed', 'chi'; got {criterion!r}.")
+        if multi_arm_split not in ('multi_way', 'per_arm'):
+            raise ValueError(f"multi_arm_split must be 'multi_way' or 'per_arm'; got {multi_arm_split!r}.")
         self.max_depth = max_depth
         self.min_samples_leaf = min_samples_leaf
         self.min_samples_treatment = min_samples_treatment
         self.criterion = criterion
+        self.multi_arm_split = multi_arm_split
         self.max_candidates = max_candidates
         self.min_gain = min_gain
-        self._root: _Node | None = None
+        self._root: _Node | None = None         # shared tree (binary / multi_way)
+        self._trees: dict[int, _Node] = {}        # one two-arm tree per arm (per_arm)
 
-    def _fit_estimators(
-        self,
-        X: np.ndarray | pd.DataFrame,
-        treatment: np.ndarray,
-        y: np.ndarray,
-        eval_set: tuple | None,
-        **fit_params: Any,
+    def _fit_arms(
+        self, X: Any, treatment: np.ndarray, y: np.ndarray, eval_set: tuple | None = None, **fit_params: Any,
     ) -> None:
         del eval_set, fit_params
         x = np.asarray(_to_array(X), dtype=np.float64)
         t = treatment.astype(int)
         y = y.astype(np.float64)
-        if not (t == 0).any() or not (t == 1).any():
-            raise ValueError('UpliftTree requires both treated and control samples.')
-        self._root = self._build(x, t, y, depth=0)
+        if len(self.arms_) == 2 or self.multi_arm_split == 'multi_way':
+            self._root = self._build(x, t, y, self.arms_, depth=0)
+            self._trees = {}
+        else:
+            self._root = None
+            self._trees = {arm: self._build(*self._subset(x, t, y, arm), [0, arm], depth=0) for arm in self.arms_[1:]}
 
-    def _rates(self, t: np.ndarray, y: np.ndarray) -> tuple[float, float]:
-        p_t = float(y[t == 1].mean()) if (t == 1).any() else 0.0
-        p_c = float(y[t == 0].mean()) if (t == 0).any() else 0.0
-        return p_t, p_c
+    @staticmethod
+    def _subset(x: np.ndarray, t: np.ndarray, y: np.ndarray, arm: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        mask = (t == 0) | (t == arm)
+        return x[mask], t[mask], y[mask]
 
-    def _build(self, x: np.ndarray, t: np.ndarray, y: np.ndarray, depth: int) -> _Node:
-        p_t, p_c = self._rates(t, y)
-        node = _Node(p_t, p_c)
+    def _build(self, x: np.ndarray, t: np.ndarray, y: np.ndarray, arms: list[int], depth: int) -> _Node:
+        node = _Node(self._rates(t, y, arms))
         if depth >= self.max_depth or len(y) < 2 * self.min_samples_leaf:
             return node
-
-        parent_div = _divergence(p_t, p_c, self.criterion)
-        best = self._best_split(x, t, y, parent_div)
+        parent_div = self._multi_divergence(node.rates, arms)
+        best = self._best_split(x, t, y, arms, parent_div)
         if best is None:
             return node
-
         feature, threshold, left_mask = best
         node.feature, node.threshold = feature, threshold
-        node.left = self._build(x[left_mask], t[left_mask], y[left_mask], depth + 1)
-        node.right = self._build(x[~left_mask], t[~left_mask], y[~left_mask], depth + 1)
+        node.left = self._build(x[left_mask], t[left_mask], y[left_mask], arms, depth + 1)
+        node.right = self._build(x[~left_mask], t[~left_mask], y[~left_mask], arms, depth + 1)
         return node
 
-    def _best_split(self, x: np.ndarray, t: np.ndarray, y: np.ndarray, parent_div: float) -> tuple | None:
+    def _rates(self, t: np.ndarray, y: np.ndarray, arms: list[int]) -> dict[int, float]:
+        return {arm: float(y[t == arm].mean()) if (t == arm).any() else 0.0 for arm in arms}
+
+    def _multi_divergence(self, rates: dict[int, float], arms: list[int]) -> float:
+        return sum(_divergence(rates[arm], rates[0], self.criterion) for arm in arms[1:])
+
+    def _best_split(self, x: np.ndarray, t: np.ndarray, y: np.ndarray, arms: list[int], parent_div: float) -> tuple | None:
         n = len(y)
         best_gain = self.min_gain
         best = None
@@ -135,7 +153,7 @@ class UpliftTree(BaseMetaUpliftModel):
                 candidates = (uniq[:-1] + uniq[1:]) / 2.0
             for threshold in candidates:
                 left = col <= threshold
-                gain = self._split_gain(t, y, left, n, parent_div)
+                gain = self._split_gain(t, y, arms, left, n, parent_div)
                 if gain is not None and gain > best_gain:
                     best_gain = gain
                     best = (feature, float(threshold), left)
@@ -145,6 +163,7 @@ class UpliftTree(BaseMetaUpliftModel):
         self,
         t: np.ndarray,
         y: np.ndarray,
+        arms: list[int],
         left: np.ndarray,
         n: int,
         parent_div: float,
@@ -154,21 +173,23 @@ class UpliftTree(BaseMetaUpliftModel):
             return None
         div = 0.0
         for mask in (left, right):
-            nt = int((t[mask] == 1).sum())
-            nc = int((t[mask] == 0).sum())
-            if nt < self.min_samples_treatment or nc < self.min_samples_treatment:
+            if any(int((t[mask] == arm).sum()) < self.min_samples_treatment for arm in arms):
                 return None
-            p_t, p_c = self._rates(t[mask], y[mask])
-            div += (mask.sum() / n) * _divergence(p_t, p_c, self.criterion)
+            div += (mask.sum() / n) * self._multi_divergence(self._rates(t[mask], y[mask], arms), arms)
         return div - parent_div
 
-    def _predict_components(self, X: np.ndarray | pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
+    def _predict_arm(self, X: Any, arm: int) -> np.ndarray:
         x = np.asarray(_to_array(X), dtype=np.float64)
-        y0 = np.empty(len(x), dtype=np.float64)
-        y1 = np.empty(len(x), dtype=np.float64)
-        for i, row in enumerate(x):
-            node = self._root
-            while node.feature is not None:
-                node = node.left if row[node.feature] <= node.threshold else node.right
-            y0[i], y1[i] = node.p_c, node.p_t
-        return y0, y1
+        if self._root is not None:
+            return np.array([self._leaf(self._root, row).rates[arm] for row in x], dtype=np.float64)
+        if arm == 0:
+            return np.zeros(len(x), dtype=np.float64)
+        leaves = (self._leaf(self._trees[arm], row) for row in x)
+        return np.array([leaf.rates[arm] - leaf.rates[0] for leaf in leaves], dtype=np.float64)
+
+    @staticmethod
+    def _leaf(root: _Node, row: np.ndarray) -> _Node:
+        node = root
+        while node.feature is not None:
+            node = node.left if row[node.feature] <= node.threshold else node.right
+        return node

@@ -4,8 +4,12 @@ import pytest
 from sklearn.metrics import auc
 
 from uplift_forecast.metrics import (
+    arm_score_summary,
     auuc_score,
     cumulative_gain_curve,
+    kendall_uplift,
+    lift_at_k,
+    pehe,
     qini_curve,
     qini_score,
     uplift_component_mae,
@@ -100,6 +104,54 @@ class TestInputValidation:
     def test_accepts_list_inputs(self, score_fn):
         # ArrayLike (not only ndarray) must be accepted at the boundary.
         assert score_fn([0.0, 1.0, 2.0, 3.0], list(PERFECT), [1, 0, 1, 0]) == pytest.approx(1.0)
+
+
+class TestMultiArm:
+    @staticmethod
+    def _data() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        rng = np.random.default_rng(0)
+        n = 400
+        t = rng.integers(0, 3, size=n)
+        x1, x2 = rng.normal(size=n), rng.normal(size=n)
+        y = (x1 + (t == 1) * x1 + (t == 2) * 0.5 * x2 + rng.normal(size=n)).astype(float)
+        uplift = np.column_stack([x1, 0.5 * x2])
+        return y, uplift, t
+
+    @pytest.mark.parametrize('curve_fn', [cumulative_gain_curve, qini_curve])
+    def test_curves_are_per_arm_dicts(self, curve_fn):
+        y, u, t = self._data()
+        curves = curve_fn(y, u, t)
+        assert set(curves) == {1, 2}
+        x, gain = curves[1]
+        assert x.shape == gain.shape
+        assert gain[0] == 0.0
+
+    def test_lift_at_k_per_arm(self):
+        y, u, t = self._data()
+        lift = lift_at_k(y, u, t, 0.3)
+        assert set(lift) == {1, 2}
+        assert all(np.isfinite(v) for v in lift.values())
+        assert np.isfinite(lift_at_k(y[t < 2], u[t < 2, 0], t[t < 2]))  # binary -> float
+
+    def test_lift_at_k_rejects_bad_fraction(self):
+        y, u, t = self._data()
+        with pytest.raises(ValueError, match='k must be'):
+            lift_at_k(y, u, t, 0.0)
+
+    def test_arm_score_summary(self):
+        y, u, t = self._data()
+        mean, std = arm_score_summary(qini_score(y, u, t))
+        assert np.isfinite(mean)
+        assert std >= 0.0
+        assert arm_score_summary(0.5) == (0.5, 0.0)  # binary float collapses
+
+    def test_pehe_and_kendall(self):
+        y, u, t = self._data()
+        true = np.column_stack([np.full(len(t), 0.3), np.full(len(t), 0.7)])
+        assert set(pehe(true, u)) == {1, 2}
+        assert set(kendall_uplift(true, u)) == {1, 2}
+        assert isinstance(pehe(true[:, 0], u[:, 0]), float)
+        assert isinstance(kendall_uplift(true[:, 0], u[:, 0]), float)
 
 
 class TestComponentMetrics:
