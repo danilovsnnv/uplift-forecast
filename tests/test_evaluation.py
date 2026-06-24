@@ -31,6 +31,7 @@ def test_compare_models_pandas(fitted_forecast):
 
 
 def test_compare_models_polars(fitted_forecast):
+    pytest.importorskip('polars')
     fc, x, t, y = fitted_forecast
     table = evaluation.compare_models(fc, x, y, t, frame='polars')
     assert type(table).__name__ == 'DataFrame'  # polars.DataFrame
